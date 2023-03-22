@@ -1,9 +1,9 @@
 [package]
 name = "estamp"
 version = "0.0.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
+description = "電子印"
+authors = ["K.T"]
+license = "MIT"
 repository = ""
 edition = "2021"
 

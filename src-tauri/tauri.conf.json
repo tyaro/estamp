@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "estamp",
-    "version": "0.0.0"
+    "version": "0.0.1"
   },
   "tauri": {
     "allowlist": {
@@ -23,7 +23,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.tauri.dev",
+      "identifier": "tyaromax",
       "targets": "all"
     },
     "security": {
@@ -36,9 +36,11 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "estamp",
-        "width": 800,
-        "height": 600
+        "title": "電子印",
+        "width": 250,
+        "height": 120,
+        "maxWidth": 250,
+        "maxHeight": 310
       }
     ]
   }

@@ -1,88 +1,173 @@
 <script lang="ts">
-  import {
-      writeText,
-      readText,
-      readImage,
-      writeImage,
-  } from "tauri-plugin-clipboard-api";
+  import {Canvg} from 'canvg';
+  import { settings,type Setting } from './store';
+  import { onMount } from 'svelte';
+  import { invoke } from "@tauri-apps/api/tauri"
+  import toast, { Toaster } from 'svelte-french-toast';
 
-  function base64Encode(...parts) {
-    return new Promise(resolve => {
-      const reader:any = new FileReader();
-      reader.onload = () => {
-        const offset = reader.result.indexOf(",") + 1;
-        resolve(reader.result.slice(offset));
-      };
-      reader.readAsDataURL(new Blob(parts));
-    });
+  const save = async() => {
+    let config = $settings
+    let result = await invoke("save",{config});
+    toast.success("save complete!!",{position:"top-center"})
+    console.log(result)
   }
 
-  
+  const load = async () => {
+    let result:Setting = await invoke("load",{})
+    $settings = result
+  }
+
+  onMount(async ()=>{
+    await load()
+  })
+
+
 
   const clipboardCopy = async () => {
-    // const re = /class="s-XsEmFtvddWTw"/;
-    // const svg = svgText.replace(re,"")
     let src = document.querySelector("svg")
+    const svgText = src.outerHTML.replace(/NS[0-9]+:href/g, "xlink:href");
     let canvas = document.createElement("canvas");
+    
     canvas.width = src.width.baseVal.value;
     canvas.height = src.height.baseVal.value;
-    const ctx = canvas.getContext('2d');
-    const svgText = new XMLSerializer().serializeToString(src);
-    const enc:any = await base64Encode(svgText)
-    const imgsrc = "data:image/svg+xml;charset=utf-8;base64," + enc
-    let img = new Image();
-    img.onload = async () => {
-      ctx.drawImage(img, 0, 0,img.width,img.height);
-      document.getElementById("newimg").src = data;
-    }
-    img.src = "data:image/svg+xml;charset=utf-8;base64," + enc
-    const data = canvas.toDataURL("image/png")
-      // console.log(imgsrc)
-      const b = await base64Encode(data)
-      const result = await writeImage(b).catch((e:any)=>{console.log("error:",e)})
-    // const b = await base64Encode(canvas.toBlob())
-    // const result = await writeImage(b).catch((e)=>{console.log("error:",e)})
-    // console.log(result)
-    // console.log(img.src)
-    // canvas.toBlob(async(blob)=>{
-    //   const result = await writeImage(blob)
-    //   // const item = new ClipboardItem({'image/png':blob})
-    //   // await navigator.clipboard.write([item]).catch((e)=>console.log("error",e));
-    //   console.log(result)
-    // })
-    
+    var ctx = canvas.getContext('2d');
+    const v:Canvg = Canvg.fromString(ctx,svgText)
+    v.resize($settings.output_size,$settings.output_size,'xMidYMid meet')
+    await v.render()
+    const data:string = canvas.toDataURL("image/png")
+    canvas.toBlob(async(blob)=>{
+      const item = new ClipboardItem({'image/png':blob})
+      await navigator.clipboard.write([item]).catch((e)=>console.log("error",e));
+    })
+    toast.success("copy!!",{position:"bottom-center"})
   };
   const today = new Date()
-  let str_top = "部署名"
-  let str_date:String = today.getFullYear + "." 
-              + ("00"+today.getMonth+1).slice(-2) +"."
-              + ("00"+today.getDay).slice(-2);
-  let str_bottom = "名前"
-</script>
+  let str_date:String = today.getFullYear() + "." 
+              + ("00"+String(today.getMonth()+1)).slice(-2) +"."
+              + ("00"+today.getDate()).slice(-2);
 
-<div id="estamp">
-<svg id="stamp" version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
+
+</script>
+<Toaster />
+<div class="main">
+  <button on:click={()=>clipboardCopy()}>
+  <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
+ 
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
   <line x1="20" y1="155" x2="380" y2="155" style="stroke:rgb(255,0,0);stroke-width:5" />
   <line x1="20" y1="245" x2="380" y2="245" style="stroke:rgb(255,0,0);stroke-width:5" />
-  <text font-family='Shippori Mincho B1' font-size="80"  font-weight="normal" x=200 y=100 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
-    {str_top}
+  <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.top_font_size}   x=200 y=100 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
+    {$settings.top_str}
   </text>
-  <text font-size="64"  x=200 y=200 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
+  <text font-size={$settings.mid_font_size}  x=200 y=200 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {str_date}
   </text>
-  <text font-family='Shippori Mincho B1' font-size="96" x=200 y=300 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
-    {str_bottom}
+  <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.btm_font_size} x=200 y=300 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
+    {$settings.btm_str}
   </text>
 </svg>
+</button>
 </div>
-<button on:click={()=>clipboardCopy()}>copy</button>
-<div><img id="newimg" alt="hoge"></div>
+<div class="menu">
+  <table>
+    <tr>
+      <th>位置</th>
+      <th>文字列</th>
+      <th style="width:20px">サイズ</th>
+    </tr>
+    <tr>
+      <td style="width:4rem;text-align:center">
+        上段
+      </td>
+      <td >
+        <input class="variant-glass-primary" style="width:6rem"  bind:value={$settings.top_str}>
+      </td>
+      <td>
+        <input class="variant-glass-primary" type="number" style="width:4rem" bind:value={$settings.top_font_size}>
+      </td>
+    </tr>
+    <tr>
+      <td style="width:4rem;text-align:center">
+        中
+      </td>
+      <td >
+        <input class="variant-glass-primary" style="width:6rem"  bind:value={str_date}>
+      </td>
+      <td>
+      </td>
+    </tr>
+    <tr>
+      <td style="width:4rem;text-align:center">
+        下段
+      </td>
+      <td >
+        <input class="variant-glass-primary" style="width:6rem"  bind:value={$settings.btm_str}>
+      </td>
+      <td>
+        <input class="variant-glass-primary" type="number" style="width:4rem" bind:value={$settings.btm_font_size}>
+      </td>
+    </tr>
+    <tr>
+      <td style="width:4rem;text-align:center">
+        サイズ
+      </td>
+      <td >
+        <input type="number" class="variant-glass-primary" style="width:6rem"  bind:value={$settings.output_size}>
+      </td>
+      <td>
+        px
+      </td>
+    </tr>
+  </table>
+</div>
+<div style="display:flex;justify-content:center;margin-top:5px">
+    <button class="save" on:click={save}>保存</button>
+</div>
+
 
 
 
 <style>
   /* @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1&display=swap');ß */
   @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;700&display=swap');
+
+  input{
+    border-radius: 8px;
+    text-align: center;
+    background-color:primary;
+    border: 2px;
+    
+  }
+  .save{
+    background-color: rgb(147, 147, 250);
+    width: 150px;
+    height: 25px;
+    border-radius: 8px;
+    margin-top: 5px;
+  }
+  button{
+    width: fit-content;
+  }
+  button :hover{
+    opacity: 0.8;
+  }
+  button :active{
+    opacity: 0.6;
+  }
+  .main{
+    text-align: center;
+    justify-items: center;
+    justify-content: center;
+    align-items: flex-start;
+    display: flex;
+    margin-top:5px;
+    width: 240px;
+    height: 125px;
+  }
+  .menu{
+    min-width: 15rem;
+    margin-top:5px;
+  }
+
 </style>
 
