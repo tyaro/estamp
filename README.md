@@ -1,6 +1,6 @@
-# Tauri + Svelte + Typescript
+# 電子印
 
-This template should help get you started developing with Tauri, Svelte and TypeScript in Vite.
+個人的に練習用で作成
 
 ## Recommended IDE Setup
 
