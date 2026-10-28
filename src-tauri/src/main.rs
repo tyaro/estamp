@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Settings {
     top_str: String,
     top_font_size: u32,
@@ -17,8 +18,12 @@ struct Settings {
 
 #[tauri::command]
 fn save(config: Settings) -> Result<String, String> {
-    let toml = serde_json::to_string(&config).unwrap();
-    let file = File::create("Setting.json");
+    save_to_path(&config, Path::new("Setting.json"))
+}
+
+fn save_to_path(config: &Settings, path: &Path) -> Result<String, String> {
+    let toml = serde_json::to_string(config).unwrap();
+    let file = File::create(path);
     match file {
         Err(e) => Err(format!("error:{:?}", e)),
         Ok(mut v) => {
@@ -31,7 +36,11 @@ fn save(config: Settings) -> Result<String, String> {
 
 #[tauri::command]
 fn load() -> Result<Settings, String> {
-    let s = fs::read_to_string("Setting.json");
+    load_from_path(Path::new("Setting.json"))
+}
+
+fn load_from_path(path: &Path) -> Result<Settings, String> {
+    let s = fs::read_to_string(path);
     match s {
         Err(e) => Err(e.to_string()),
         Ok(v) => match serde_json::from_str(&v) {
@@ -43,8 +52,54 @@ fn load() -> Result<Settings, String> {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save, load,])
+        .invoke_handler(tauri::generate_handler![save, load])
         .plugin(tauri_plugin_clipboard_manager::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("estamp-settings-{}-{nonce}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn settings_save_load_round_trip() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("Setting.json");
+        let expected = Settings {
+            top_str: "品質・デバッグ部\n\"確認\"".to_string(),
+            top_font_size: 17,
+            mid_font_size: 23,
+            btm_str: "山田\\太郎".to_string(),
+            btm_font_size: 19,
+            output_size: 512,
+        };
+
+        assert_eq!(save_to_path(&expected, &path).unwrap(), "success");
+        let restored = load_from_path(&path).unwrap();
+        assert_eq!(restored, expected);
+    }
 }
