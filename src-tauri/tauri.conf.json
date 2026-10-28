@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "estamp",
   "version": "0.0.1",
-  "identifier": "tyaromax",
+  "identifier": "jp.tyaro.estamp",
   "build": {
     "beforeDevCommand": "corepack yarn dev",
     "beforeBuildCommand": "corepack yarn build",
