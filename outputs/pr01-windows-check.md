@@ -1,6 +1,6 @@
 # PR-01: Windows 確認手順（未実施）
 
-Mac の Rust check / release build が通ったコミットを使用する。v2 の設定・API・プラグイン移行と JS 検証は済んだが、Rust の推移依存不整合で停止中。[追加取得手順](pr01-need-install2.md) を解消するまで、この手順のビルド対象としては未完成。
+Mac の検証結果と依存選定は [第4回結果](pr01-final4.md) と [ローカル依存調査](pr01-dependency-audit4.md) を参照。旧 [追加取得手順](pr01-need-install2.md) の runtime 2版だけを戻す案は使用しない。今回の lock は Tauri 2.12.2 / tauri-build 2.7.1 / JS API 2.12.4。Windows での以下の検証は未実施。
 
 ## 環境
 
@@ -8,7 +8,7 @@ Mac の Rust check / release build が通ったコミットを使用する。v2 
 - Visual Studio 2022 Build Tools の「C++ によるデスクトップ開発」、MSVC x64、Windows SDK を導入する。
 - WebView2 Evergreen Runtime を用意し、版を記録する。ランタイム未導入環境の配布検証は PR-07。
 - Node `24.22.1`、Yarn Classic `1.22.22`、Rust `1.95.0` の MSVC x64 toolchain を用意する。`.nvmrc` / `packageManager` / `rust-toolchain.toml` と一致させる。
-- 以下の例ではリポジトリを `C:\work\estamp` に配置する。PowerShell で実行する。途中のコマンドが非ゼロで終了したら、後続を実行せずログを確認する。
+- 以下の例ではリポジトリを `C:\work\estamp` に配置する。PowerShell で実行する。途中のコマンドが非ゼロで終了したら、後続を実行せずログを確認する。Cargo は `-j 2`、ビルド・テストは1つずつ実行する。
 
 ## lock による依存復元・ビルド
 
@@ -24,16 +24,18 @@ rustc --version --verbose
 cargo --version
 rustup show active-toolchain
 corepack yarn install --frozen-lockfile
-cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+# cargo fetch は -j 非対応。並列2制限を維持するため、初回 check で依存を取得する。
 corepack yarn run check
 corepack yarn build
-cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-corepack yarn tauri build --no-bundle --target x86_64-pc-windows-msvc -- --locked
+cargo check -j 2 --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+node node_modules/@tauri-apps/cli/tauri.js build --no-bundle --target x86_64-pc-windows-msvc -- --locked --offline -j 2
+cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 git diff --exit-code -- yarn.lock src-tauri/Cargo.lock
 ```
 
 ロックを変更せず復元できること、型チェック・フロント build・Rust check・Tauri release build がすべて終了コード 0 で完了することを記録する。MSIX 生成は PR-07。
 Yarn Classic の `yarn check` は組込みコマンドのため、型検証には `yarn run check` を使用する。
+release build は Yarn による `--` の除去を避けるため、インストール済み CLI を Node で直接呼ぶ。Mac では指定 PATH の stable Rust 1.99.1 で検証したため、固定版 1.95.0 での結果も記録する。
 
 ## 実行確認
 
@@ -41,7 +43,7 @@ Yarn Classic の `yarn check` は組込みコマンドのため、型検証に�
 
 ```powershell
 Set-Location C:\work\estamp
-corepack yarn tauri dev
+node node_modules/@tauri-apps/cli/tauri.js dev -- --locked --offline -j 2
 ```
 
 - ウィンドウが起動し、印影・日本語の上段／下段が表示される。
