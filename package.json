@@ -12,11 +12,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.8.0",
+    "@tauri-apps/api": "2.12.4",
     "@tauri-apps/plugin-clipboard-manager": "2.3.0"
   },
   "resolutions": {
-    "@tauri-apps/api": "2.8.0"
+    "@tauri-apps/api": "2.12.4"
   },
   "devDependencies": {
     "@skeletonlabs/skeleton": "^1.0.0",
