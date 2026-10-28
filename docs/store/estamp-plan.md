@@ -2,6 +2,8 @@
 
 作成日: 2026-10-22（JST）／発行元表示名: **Banto Works**
 
+2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。最新の実装・検証は [PR-01 第5回結果](../../outputs/pr01-final5.md) を参照。
+
 対象: `/Users/tyaromax/development/tauri/estamp`、確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
 前提資料: [企画部評価](estamp-store-eval.md)。本作業ではソース、設定、依存関係、Git を読み取っただけで、コード変更、依存取得、ビルド、Store 登録・提出は行っていない。以下の PR 名・構成・人日は実施案であり、人日はすべて見積もり。
 

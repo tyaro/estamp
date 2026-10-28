@@ -3,6 +3,8 @@
 作成: 2026-10-22 06:06 JST ／ 企画部門 調査担当（Grok Bot）。リポジトリは読み取りのみ。
 凡例: 人日・効果は【推測】。
 
+2026-10-29 PR-01 レビュー修正追記: identifier は **`jp.tyaro.estamp`** に確定し、設定に反映。以下は評価時点の記録。MSIX Identity / Publisher は PR-07 で別途扱う。最新結果は [PR-01 第5回結果](../../outputs/pr01-final5.md) を参照。
+
 ## 1. 何のアプリか
 - **日付印（丸の中を3段に分けた「部署名／日付／氏名」の印影）を作る小さな Windows アプリ。** 印影をクリックすると、指定サイズの PNG でクリップボードにコピーされ、Word・Excel などに貼れる。上段・下段の文字とサイズ、出力サイズを保存できる。
 - 技術: **Tauri v1.2**（Rust）＋ Svelte 3 ＋ Vite 4 ＋ Tailwind／Skeleton。SVG を canvg で PNG にし、`navigator.clipboard` でコピーする。

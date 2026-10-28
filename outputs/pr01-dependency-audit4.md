@@ -117,7 +117,7 @@
 
 採用案: tauri =2.12.2 / tauri-build =2.7.1 に変更。新本体は UnexpectedMenuKind を持ち、runtime / runtime-wry ~2.12.1、macros ~2.7.1、utils ~2.10.1 を要求する。既存 lock の newer patch（runtime 2.12.2、macros / codegen 2.7.4、utils 2.10.2）はこの範囲を満たすため維持する。runtime-wry 2.12.1 と runtime 2.12.2 の src/lib.rs は同一（diff 確認）。wry 0.57.0 / tao 0.37.1 / muda 0.20.0 も manifest の要求範囲内。最終的な互換性は cargo check / build で検証する。
 
-clipboard-manager 2.3.0 は tauri ^2.6 を要求し、新本体も適合。JS API は 2.12.4 に更新し、`resolutions` と `yarn.lock` でプラグイン側の `^2.6.0` も同じ版へ統一する。CLI 2.8.4 / clipboard-manager 2.3.0 は維持する。Yarn による取得は再開前にユーザーがサンドボックス外で実施済み。Tauri 2.12.2 の image/plugin.rs に RGBA/width/height -> ResourceId 経路が残り、JS Image.new と clipboard-manager の JsImage 受渡しが対応している。CLI build と画像 IPC の最終結果は pr01-final4.md を参照。
+clipboard-manager 2.3.0 は tauri ^2.6 を要求し、新本体も適合。JS API は 2.12.4 に更新し、`resolutions` と `yarn.lock` でプラグイン側の `^2.6.0` も同じ版へ統一する。第4回では CLI 2.8.4 / clipboard-manager 2.3.0 を維持した。第5回では CLI を 2.12.4、clipboard-win を 5.4.3 に更新した（最新結果は [第5回結果](pr01-final5.md)）。Yarn による取得は再開前にユーザーがサンドボックス外で実施済み。Tauri 2.12.2 の image/plugin.rs に RGBA/width/height -> ResourceId 経路が残り、JS Image.new と clipboard-manager の JsImage 受渡しが対応している。第4回の CLI build と画像 IPC の結果は pr01-final4.md を参照。
 
 ## 今回の lock 全差分（受領 lock 比、全プラットフォーム）
 
