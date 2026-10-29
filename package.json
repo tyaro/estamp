@@ -1,7 +1,9 @@
 {
   "name": "estamp",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
+  "description": "画像の日付印を作るアプリ",
+  "license": "MIT",
   "type": "module",
   "packageManager": "yarn@1.22.22",
   "scripts": {

@@ -1,7 +1,7 @@
 [package]
 name = "estamp"
-version = "0.0.0"
-description = "電子印"
+version = "0.0.1"
+description = "画像の日付印を作るアプリ"
 authors = ["K.T"]
 license = "MIT"
 repository = ""

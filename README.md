@@ -1,6 +1,10 @@
 # 電子印
 
-個人的に練習用で作成
+画像の日付印を作る無料の MIT アプリ。初回の Microsoft Store 公開対象は Windows 11 / x64 / 日本語で、広告・アプリ内課金・試用期限は設けない。
+
+公開条件・機能範囲・識別情報と未確定事項は [公開方針](docs/store/estamp-release-policy.md) を参照。発行元表示名は **Banto Works（暫定）**。本体は [MIT License](LICENSE)、著作権者は **Banto Works**、著作権表記は **`Copyright (c) 2026 Banto Works`（確定）**とする（2026-10-30 00:06 JST ユーザー決定）。依存ライブラリと書体のライセンスは別に扱う。
+
+起動時に印影だけを表示する小さなウィンドウは意図した仕様で、設定は基本的に初回だけ行う。現在のウィンドウ寸法は維持する。UI 書体は BIZ UDPゴシック（BIZ UDPGothic）、印影書体はしっぽり明朝 B1（Shippori Mincho B1）に決定し、書体の同梱・実装は PR-03 で行う。
 
 ## 開発環境
 
@@ -33,6 +37,8 @@ Vite は `TAURI_ENV_PLATFORM` / `TAURI_ENV_DEBUG` を参照し、フロントへ
 
 画像コピーは公式 clipboard-manager を使用する。main ウィンドウに画像生成・画像書込み・リソース解放だけを許可し、clipboard 読取りや default 権限は追加しない。
 既存の `save` / `load` と CWD 相対の `Setting.json` は維持する。保存・読込の共通処理は一時ディレクトリで round-trip テストする。保存先と書込みエラー処理の正常化は PR-02、書体同梱は PR-03、画像品質の完成判定は PR-05、CSP の厳格化は PR-06 で行う。
+
+`outputs/` の作業メモ・検証ログはローカル保存用とし、新規にコミットしない。公開方針・ユーザー作業・検証要約など、リポジトリに残す情報は `docs/` 等の追跡文書に記録する。
 
 ## Recommended IDE Setup
 
