@@ -2,9 +2,9 @@
 
 作成日: 2026-10-22（JST）／発行元表示名: **Banto Works**
 
-2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。最新の実装・検証は [PR-01 第5回結果](../../outputs/pr01-final5.md) を参照。
+2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。開発手順と検証範囲は [開発・検証手順](../development.md) を参照。
 
-対象: `/Users/tyaromax/development/tauri/estamp`、確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
+対象: 本リポジトリ（estamp）、確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
 前提資料: [企画部評価](estamp-store-eval.md)。本作業ではソース、設定、依存関係、Git を読み取っただけで、コード変更、依存取得、ビルド、Store 登録・提出は行っていない。以下の PR 名・構成・人日は実施案であり、人日はすべて見積もり。
 
 ## 1. 方針と今回の公開範囲
@@ -33,7 +33,7 @@
 | 権限 | `api-all`、`allowlist.all = true`、`csp = null` | v2 の capabilities と本番 CSP を設計し直す |
 | ライセンス・メタデータ | Cargo の `license` は空欄、著者は `you`、version は 0.0.0、LICENSE はない | MIT と権利者の明記、発行元・製品情報・版番号を整える |
 
-主な根拠: [Cargo.toml](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.toml:1)、[Cargo.lock](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.lock:2909)、[yarn.lock](/Users/tyaromax/development/tauri/estamp/yarn.lock:173)、[App.svelte](/Users/tyaromax/development/tauri/estamp/src/App.svelte:22)、[main.rs](/Users/tyaromax/development/tauri/estamp/src-tauri/src/main.rs:36)、[tauri.conf.json](/Users/tyaromax/development/tauri/estamp/src-tauri/tauri.conf.json:13)。
+主な根拠: [Cargo.toml](../../src-tauri/Cargo.toml)、[Cargo.lock](../../src-tauri/Cargo.lock)、[yarn.lock](../../yarn.lock)、[App.svelte](../../src/App.svelte)、[main.rs](../../src-tauri/src/main.rs)、[tauri.conf.json](../../src-tauri/tauri.conf.json)。
 
 ## 3. 先に決める論点と推奨判断
 

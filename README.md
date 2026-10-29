@@ -24,8 +24,7 @@ node node_modules/@tauri-apps/cli/tauri.js dev -- --locked --offline -j 2
 Yarn Classic の `yarn check` は組込みの依存整合性コマンドになるため、型検証は必ず **`yarn run check`** とする。
 依存取得済みの環境では Cargo に `--offline` を追加できる（Tauri build は `-- --locked --offline -j 2`）。
 Yarn Classic が Tauri / Cargo 間の `--` を消す場合があるため、release build はインストール済み CLI を Node で直接呼ぶ。Tauri の `beforeBuildCommand` が Vite 本番 build を実行する。ビルド・テストは1つずつ実行する。
-Windows の実機確認は [PR-01 確認手順](outputs/pr01-windows-check.md) を参照。
-Mac の最新検証結果は [PR-01 第5回結果](outputs/pr01-final5.md)、起動手順は [第4回結果](outputs/pr01-final4.md) を参照。指定 PATH では stable Rust **1.99.1** が選ばれ、この Mac での **1.95.0** の検証は未実施。
+Windows の実機確認、Mac の起動手順、検証範囲は [開発・検証手順](docs/development.md) を参照。Mac の既存検証は stable Rust **1.99.1** で実施し、固定版 **1.95.0** での検証は未実施。
 GitHub Actions の [Windows CI](.github/workflows/windows.yml) は push / pull_request ごとに Windows、Rust **1.95.0**、Node **24**、Yarn **1.22.22** で依存復元・型チェック・Rust check / test・Tauri release build（bundle なし）を順に実行する。CI の実行結果と GUI / clipboard の実機確認は別途記録する。
 
 アプリの identifier は **`jp.tyaro.estamp`** に確定した。Store の MSIX Identity / Publisher 割当値は別途 PR-07 で扱う。
