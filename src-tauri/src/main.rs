@@ -51,13 +51,37 @@ fn import_legacy(
     settings_store(&app)?.import_legacy(&legacy_path()?, revision.as_deref())
 }
 
+// Both the frontend and native build must explicitly opt into measurement.
+// No text, dates, settings or caller-selected file paths cross this command.
+struct Pr05Clock(std::time::Instant);
+
+#[tauri::command]
+fn pr05_measure(clock: tauri::State<'_, Pr05Clock>, event: String, ms: f64) -> Result<(), String> {
+    if option_env!("ESTAMP_PR05_MEASURE") != Some("1") {
+        return Err("計測用ビルドではありません".into());
+    }
+    if !matches!(event.as_str(), "first-window-paint" | "fonts-ready" | "first-stamp-render")
+        || !ms.is_finite() || !(0.0..=3_600_000.0).contains(&ms)
+    {
+        return Err("不正な計測値です".into());
+    }
+    let path = std::env::var_os("ESTAMP_PR05_METRICS").ok_or("計測先がありません")?;
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{event},{ms:.3},{:.3}", clock.0.elapsed().as_secs_f64() * 1000.0).map_err(|e| e.to_string())
+}
+
 fn main() {
+    let measurement_clock = Pr05Clock(std::time::Instant::now());
     tauri::Builder::default()
+        .manage(measurement_clock)
         .invoke_handler(tauri::generate_handler![
             save,
             load,
             import_legacy,
-            legacy_available
+            legacy_available,
+            pr05_measure
         ])
         .plugin(tauri_plugin_clipboard_manager::init())
         .run(tauri::generate_context!())

@@ -66,11 +66,15 @@ test('font faces reference only the four bundled original files with matching OF
 });
 
 test('all seal text specifies Shippori while UI and license resources stay local', () => {
-  const app = read('src/App.svelte');
-  const texts = [...app.matchAll(/<text\s+([^>]+)>/g)].map(match => match[1]);
-  assert.equal(texts.length, 3);
-  for (const text of texts) assert.match(text, /font-family='Shippori Mincho B1'/);
-  assert.match(read('src/app.postcss'), /font-family: 'BIZ UDPGothic', sans-serif/);
+  const image = read('src/stampImage.js');
+  assert.match(image, /STAMP_FONT = 'estamp Shippori Mincho B1'/);
+  assert.match(image, /font-family="'\$\{STAMP_FONT\}'"/);
+  assert.match(read('src/App.svelte'), /\{@html stampSvg\}/);
+  assert.match(read('src/app.postcss'), /font-family: 'estamp BIZ UDPGothic', sans-serif/);
+  for (const css of [read('src/app.postcss'), read('src/theme.css')]) {
+    assert.doesNotMatch(css, /local\(/);
+    assert.doesNotMatch(css, /font-family: '(?:BIZ UDPGothic|Shippori Mincho B1)'/);
+  }
   const resources = JSON.parse(read('src-tauri/tauri.conf.json')).bundle.resources;
   for (const path of ['../LICENSE', '../THIRD-PARTY-NOTICES.md',
     '../public/fonts/bizudpgothic/OFL.txt', '../public/fonts/shipporiminchob1/OFL.txt',
@@ -98,7 +102,7 @@ test('font loading waits for both weights and rejects missing or failed faces', 
   await Promise.resolve();
   assert.equal(done, false);
   assert.deepEqual(requests.map(request => request.font), [
-    '400 16px "Shippori Mincho B1"', '700 16px "Shippori Mincho B1"',
+    '400 16px "estamp Shippori Mincho B1"', '700 16px "estamp Shippori Mincho B1"',
   ]);
   finishBold([{}]);
   await loading;

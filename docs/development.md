@@ -13,9 +13,10 @@ corepack yarn run check
 cargo check -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml
 cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml
 corepack yarn build
+node node_modules/@tauri-apps/cli/tauri.js build --no-bundle -- --locked --offline -j 2
 ```
 
-`check` は Svelte / TypeScript の診断に続き、日付、保存、App のハンドラー、同梱書体・OFL・ハッシュの回帰テストを実行する。追加のテスト依存は使わない。
+`check` は Svelte / TypeScript の診断に続き、日付、保存、App のハンドラー、同梱書体・OFL・ハッシュ、画像生成の回帰テストを実行する。追加のテスト依存は使わない。
 App テストは実ファイルの TypeScript スクリプトを実行し、DOM 更新・Canvas・Tauri IPC をテスト用の境界に置き換える。実際の Svelte DOM 描画、WebView2、OS クリップボードの確認は実機で行う。
 
 PR-01 時点では Mac の stable Rust 1.99.1 で型検証・Rust check / test・bundle なしの Tauri release build が成功した。固定版 Rust 1.95.0、Windows CI と GUI / 画像貼付けの結果は未取得。既存の Yarn キャッシュ警告と Browserslist データの古さの通知は残る。
@@ -128,3 +129,17 @@ Skeletonの上流テーマにも外部フォントimportがあるため、`src/t
 PR-05の画像品質・Windows WebView2/DPI/オフライン実機確認、PR-07の正式MSIX収集は未実施。PR-06でCSPを固定する際も `font-src` はローカル同梱資源だけを許可する。
 
 2026-10-30 JST PR-03 最終検証: Mac ARM64 / macOS 27.2 (26B123) / Node 24.22.1 / Yarn 1.22.22 / Rust・Cargo 1.99.1。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2` で順番に実行し、`yarn run check`（診断0 errors / 0 warnings、日付10・保存4・App26・書体4＝JS44件）、`cargo check`、`cargo test`（24件）、`yarn build`、Tauri `build --no-bundle` がすべて終了コード0。distの4本のTTF・2本のOFLは取得済み原本とバイト一致し、全distファイルに外部フォントURLなし。Tauri build後も再照合済み。lockファイルは変更なし。Yarnのglobal-folder・Browserslist通知、初回RustテストのXcode SDK探索警告、release時の `rust-objcopy` / `libLLVM.dylib` 不足によるstrip警告は環境起因として記録し、共有toolchainは変更していない。固定Rust 1.95.0・Windows・GUI・MSIXは未検証。
+
+## PR-05 画像出力とWindowsへの引継ぎ
+
+`src/stampImage.js` が共通SVGを生成し、プレビューはinline SVG、出力は同じSVGをCanvgで同一documentのCanvasへ描画する。書体ロード→Canvg描画完了→`toBlob(image/png)` 完了の順。外部SVG画像へのCSS書体継承に依存せず、同梱TTFの再Base64化を避ける。PNGは独立ファイル保存UIを追加せずモジュール内で生成し、OSへはRGBA `Uint8Array` と縦横pxを `Image.new` に渡す。clipboard-manager 2.3.0はImage resourceを受け取るため `writeImage(image)` 後に `close()` する。権限は画像書込みのみ。OS側が実際に公開するPNG/DIB等は実機で別途記録する。
+
+書体名はCSS上の別名 `estamp Shippori Mincho B1` / `estamp BIZ UDPGothic` に統一した。Windowsの同名プリインストール書体へフォールバックしないよう `local()` は使わず、元のTTF/OFLを変更しない。日付文字サイズも編集可能。文字サイズ1〜400・出力1〜4096pxの整数を検証し、空欄/範囲外では保存・コピーを止める。
+
+`tests/stampImage.test.js` は注入したCanvas/renderer境界で50/100/200px、alphaデータの保持、font→draw→PNGの順序、エラー、clipboard payloadと権限・Base64なしを検査する。Appテストは本物のハンドラーでsingle-flight、画像生成／Image.new中の変更中止、コピー各段階の日本語エラー・リソース解放を確認する。これらは実WebViewのラスタライズやWindowsクリップボードを代替しない。
+
+計測フックはdev、またはフロントビルドの `VITE_PR05_MEASURE=1` で有効。marksは `estamp:first-window-paint` / `estamp:fonts-ready` / `estamp:first-stamp-render`、値は `window.__estampPerformance` とconsoleに出る。ファイルへの出力はRustも `ESTAMP_PR05_MEASURE=1` でビルドした場合だけで、実行時 `ESTAMP_PR05_METRICS` にハーネスが指定した場所へ固定イベント名・navigation ms・Rust main開始からのmsを出力する。氏名・日付等は出さない。通常配布ビルドでは両ビルド環境変数を外す。
+
+[Windows 11実機確認](verification/pr05-windows-check.md) とPowerShell3本が引継ぎ先。再起動後の3コールドスタートとキャッシュの残るプロセス再起動を区別し、実ペイントと二重rAF近似、navigationとnative mainの開始基準も区別する。メモリはestampと子WebView2の合計・各PIDのWorking Set/private bytesを保存。既存設定ディレクトリがあれば計測スクリプトは停止し、検証専用ユーザーを使用する。
+
+2026-10-30 JST PR-05 Mac最終検証: Mac ARM64 / macOS 27.2 (26B123) / Node 24.22.1 / Yarn 1.22.22 / Rust・Cargo 1.99.1。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2`、各コマンドを直列実行。`yarn run check`（0 errors / 0 warnings、日付10・保存4・App41・書体4・画像6＝JS65件）、`cargo check`、`cargo test`（24件）、`yarn build`、Tauri `build --no-bundle` が終了コード0。最終distの4TTF・2OFLは原本とバイト一致、HTML/JS/CSSに外部フォントURL候補なし、lock変更なし。既存のYarn global-folder／Browserslist通知、Rust releaseの `rust-objcopy` / `libLLVM.dylib` 不足によるstrip警告があるがビルド成功。共有toolchainは変更していない。任意のヘッドレス計測はローカルHTTP待受が環境の `EPERM` で拒否され、書体ready/初期表示/メモリのMac実測値は未取得。固定Rust 1.95.0、Windows WebView2・クリップボード・PowerShell・GUI・MSIXは未検証。

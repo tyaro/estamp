@@ -163,6 +163,18 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 
 clipboard は書込みに必要な権限だけを付与し、読取りは使わない。画像 API の入力形式は採用版の仕様に従う。[Tauri clipboard 権限](https://v2.tauri.app/plugin/clipboard/)、[画像 API](https://v2.tauri.app/reference/javascript/clipboard-manager/)
 
+2026-10-30 JST 実施記録（PR-05、Mac段階）:
+
+- 上段・下段と出力サイズの既存編集を維持し、欠けていた日付行の文字サイズ入力、各入力の日本語ラベル、整数範囲の検証を追加。文字サイズ1〜400、出力1〜4096px。不正入力中は保存・コピーを止めて画面に理由を表示する。長い氏名・和暦は共通SVGで横方向に縮小する。印影色はデザイン仕様の `#C74332`。
+- `src/stampImage.js` にプレビュー用SVG構築とPNG生成を集約。既存Canvgが同じdocumentのCanvasへ描画し、ロード済みFontFaceを使う。別画像のSVGデコーダは使わず、CSS書体が継承されない経路を避ける。約30MBのMinchoをコピーごとにBase64化・SVG埋込みしない。書体待機→Canvgのresource ready／draw完了→透過CanvasのPNGエンコード完了を待つ。Canvas実寸は出力pxでDPIに依存しない。
+- CSS familyを `estamp Shippori Mincho B1` / `estamp BIZ UDPGothic` に分離。`local()` なしの同梱TTFだけを参照し、Windows標準BIZとの同名フォールバックを避ける。書体バイナリ・OFL・原本のハッシュは不変。印影400/700とUI400/700の読込完了を待つ。
+- JS API 2.12.4、clipboard-manager JS/Rust 2.3.0の取得済み実装を確認。CanvasのUint8Array RGBA→`Image.new(width,height)`→`writeImage(Image resource)`→`close()` を使い、PNG bytesをRGBAとして渡さない。アプリ内PNG生成とOSクリップボード形式の判定は区別する。Base64変換なし。clipboard権限は既存の画像書込みだけで読取り追加なし。
+- 日本語の読込・保存・コピー成功／失敗を画面に残し、single-flightと転送直前の内容・日付・サイズ・破棄状態の再検査を維持。処理中に変わった印影は中止して再操作を案内する。
+- 開発時のperformance marks／`window.__estampPerformance` を追加。計測専用ビルドだけ、固定3イベントのnavigation時刻とRust main開始からの時刻をWindowsハーネスへ書ける。通常ビルドはファイル出力無効・UI追加なし。二重requestAnimationFrameの描画時刻は実ペイントの近似であり、実機録画で照合する。
+- [Windows確認手順](../verification/pr05-windows-check.md) と `scripts/verify/` のPowerShell3本を追加。3コールドスタート、Mincho読込前後のestamp＋子WebView2のWorking Set/private bytes、未インストール書体の別名、プレビューcropとPNG字形、50/100/200px・alpha・形式・連続操作・Paint/Office・オフラインを記録する。既存設定があれば停止し、作成した試験設定だけを所有トークン付きで片付ける。既存プロセスは終了しない。
+
+Mac検証の結果と警告は [開発手順](../development.md#pr-05-画像出力とwindowsへの引継ぎ) に記録する。Windows 11実機の起動・メモリの数値、実PNG字形・alpha・OS形式・Paint/Word/Excelへの貼付け、PowerShellの実行確認は未実施。暫定閾値（初回描画1秒・fonts ready3秒・合計private増加300MB）を超えたら要調査として次担当へ渡す。PR-06のUI/CSP確定、PR-07のMSIX生成・容量・更新保持は本段階の範囲外。
+
 ### PR-06：UI・権限・CSP を提出仕様に固定（0.75〜1.25 人日）
 
 - **目的:** 利用者が迷わず操作でき、提出用の画面と権限を固定する。

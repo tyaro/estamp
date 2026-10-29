@@ -1,5 +1,4 @@
 <script lang="ts">
-  import {Canvg} from 'canvg';
   import { settings,type LoadedSettings } from './store';
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
@@ -8,20 +7,25 @@
   import toast, { Toaster } from 'svelte-french-toast';
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
   import { saveSettings, settingsSnapshot } from './save.js';
-  import { loadStampFonts } from './fonts.js';
+  import { loadStampFonts, loadUiFonts } from './fonts.js';
+  import { buildStampSvg, renderStampImage, validateImageSettings } from './stampImage.js';
+  import { markPerformance } from './performance.js';
   import Licenses from './Licenses.svelte';
 
   let dateState = todayState();
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
-  // Canvas renderer and SVG both support transforms; keep the long era date inside the stamp.
-  $: dateWidth = Array.from(str_date).reduce((width, char) => width + (/[^\x00-\x7F]/.test(char) ? 1 : 0.6), 0) * $settings.mid_font_size;
-  $: dateTextScale = Math.min(1, 340 / dateWidth);
+  $: stampSvg = buildStampSvg($settings, str_date);
+  $: imageError = (() => {
+    try { validateImageSettings($settings); return ''; }
+    catch (error) { return `× ${String(error)}`; }
+  })();
   const refreshToday = () => { dateState = refreshDate(dateState); };
   const inputDate = (event: Event) => {
     dateState = editDate(dateState, (event.currentTarget as HTMLInputElement).value);
   };
 
   let copying = false;
+  let copyMessage = '';
   let disposed = false;
   let busy = true;
   let ready = false;
@@ -39,8 +43,15 @@
 
   const prepareFonts = async () => {
     try {
-      await loadStampFonts();
-      if (!disposed) { fontsReady = true; fontMessage = ''; }
+      await Promise.all([loadStampFonts(), loadUiFonts()]);
+      markPerformance('fonts-ready');
+      if (!disposed) {
+        fontsReady = true; fontMessage = '';
+        await tick();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!disposed) markPerformance('first-stamp-render');
+        }));
+      }
     } catch (error) {
       if (!disposed) fontMessage = `× 書体を読み込めません：${String(error)}`;
     }
@@ -51,12 +62,12 @@
     dateState = restoreDate(result.settings);
     savedSnapshot = JSON.stringify(settingsSnapshot($settings, dateState));
     revision = result.revision;
-    storageMessage = result.warning ?? '';
+    storageMessage = result.warning ?? '○ 設定を読み込みました';
     ready = true;
   };
 
   const save = async () => {
-    if (busy || !ready || dateState.error) return;
+    if (busy || !ready || dateState.error || imageError) return;
     refreshToday();
     busy = true;
     try {
@@ -65,7 +76,7 @@
       revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
       savedSnapshot = snapshot;
       dirty = !!dateState.error || JSON.stringify(settingsSnapshot($settings, dateState)) !== snapshot;
-      storageMessage = dirty ? '△ 未保存の変更があります' : '';
+      storageMessage = dirty ? '△ 未保存の変更があります' : '○ 保存しました';
       if (!dirty) toast.success("保存しました", { position: "top-center" });
     } catch (error) {
       storageMessage = `× 保存に失敗しました：${String(error)}`;
@@ -119,6 +130,9 @@
   };
 
   onMount(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!disposed) markPerformance('first-window-paint');
+    }));
     void load();
     void prepareFonts();
     const timer = window.setInterval(refreshToday, 1000);
@@ -132,49 +146,35 @@
     };
   });
   const clipboardCopy = async () => {
-    if (busy || !ready || !fontsReady || copying || dateState.error) return;
+    if (busy || !ready || !fontsReady || copying || dateState.error || imageError) return;
     copying = true;
+    copyMessage = '';
     try {
       refreshToday();
-      // Canvg draws on this document's Canvas; both explicit SVG weights must be ready.
-      await loadStampFonts();
       await tick();
-      if (dateState.error) {
-        toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
-        return;
-      }
-      const src = document.querySelector<SVGSVGElement>('#stamp');
-      if (!src) throw new Error('印影が見つかりません');
-      const expectedSvg = src.outerHTML;
+      const expectedSvg = buildStampSvg($settings, formatStampDate(dateState.date, $settings.date_format));
       const outputSize = $settings.output_size;
-      const svgText = expectedSvg.replace(/NS[0-9]+:href/g, 'xlink:href');
-      const canvas = document.createElement('canvas');
-      canvas.width = src.width.baseVal.value;
-      canvas.height = src.height.baseVal.value;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('画像を作成できません');
-      const v = Canvg.fromString(ctx, svgText);
-      v.resize(outputSize, outputSize, 'xMidYMid meet');
-      await v.render();
-      const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const image = await Image.new(new Uint8Array(data), width, height);
+      const rendered = await renderStampImage(expectedSvg, outputSize);
+      const image = await Image.new(rendered.rgba, rendered.width, rendered.height);
       try {
-        // Rendering and Image.new both yield. Flush date/format edits before writing.
         refreshToday();
         await tick();
-        if (dateState.error || document.querySelector('#stamp')?.outerHTML !== expectedSvg
+        if (disposed || busy || !ready || dateState.error || imageError
+          || buildStampSvg($settings, formatStampDate(dateState.date, $settings.date_format)) !== expectedSvg
           || $settings.output_size !== outputSize) {
-          toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
+          copyMessage = '△ 印影が変更されたためコピーを中止しました。もう一度コピーしてください。';
+          toast.error(copyMessage, { position: 'bottom-center' });
           return;
         }
         await writeImage(image);
+        copyMessage = '○ 画像をコピーしました';
       } finally {
         await image.close();
       }
-      toast.success('copy!!', { position: 'bottom-center' });
+      toast.success('画像をコピーしました', { position: 'bottom-center' });
     } catch (error) {
-      console.error('画像コピーに失敗しました', error);
-      toast.error('画像コピーに失敗しました', { position: 'bottom-center' });
+      copyMessage = `× 画像コピーに失敗しました：${String(error)}`;
+      toast.error(copyMessage, { position: 'bottom-center' });
     } finally {
       copying = false;
     }
@@ -182,32 +182,24 @@
 </script>
 <Toaster />
 <div class="app-viewport">
-{#if storageMessage}
-  <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} role="alert">{storageMessage}</p>
-{/if}
 <div class="main">
-  <button aria-label="印影をコピー" disabled={busy || !ready || !fontsReady || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
+  <button aria-label="印影をコピー" disabled={busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError} on:click={()=>clipboardCopy()}>
   {#if fontsReady}
-  <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
- 
-  <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
-  <line x1="20" y1="155" x2="380" y2="155" style="stroke:rgb(255,0,0);stroke-width:5" />
-  <line x1="20" y1="245" x2="380" y2="245" style="stroke:rgb(255,0,0);stroke-width:5" />
-  <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.top_font_size}   x=200 y=100 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
-    {$settings.top_str}
-  </text>
-  <text font-family='Shippori Mincho B1' font-weight='400' transform={`translate(200 200) scale(${dateTextScale} 1)`} font-size={$settings.mid_font_size}  x=0 y=0 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
-    {str_date}
-  </text>
-  <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.btm_font_size} x=200 y=300 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
-    {$settings.btm_str}
-  </text>
-</svg>
+  {@html stampSvg}
   {:else}
     書体を読込中…
   {/if}
 </button>
 </div>
+{#if storageMessage}
+  <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} class:storage-success={storageMessage.startsWith('○')} role="alert">{storageMessage}</p>
+{/if}
+{#if copyMessage}
+  <p class="storage-message" class:storage-success={copyMessage.startsWith('○')} role="status">{copyMessage}</p>
+{/if}
+{#if imageError}
+  <p class="storage-message" role="alert">{imageError}</p>
+{/if}
 {#if fontMessage}
   <p class="storage-message" role="alert">{fontMessage}</p>
   <button on:click={prepareFonts}>書体を再読込</button>
@@ -224,10 +216,10 @@
         上段
       </td>
       <td >
-        <input class="variant-glass-primary" style="width:6rem"  bind:value={$settings.top_str}>
+        <input class="variant-glass-primary" style="width:6rem"  aria-label="上段の文字列" bind:value={$settings.top_str}>
       </td>
       <td>
-        <input class="variant-glass-primary" type="number" style="width:4rem" bind:value={$settings.top_font_size}>
+        <input class="variant-glass-primary" type="number" style="width:4rem" aria-label="上段の文字サイズ" min="1" max="400" step="1" bind:value={$settings.top_font_size}>
       </td>
     </tr>
     <tr>
@@ -240,6 +232,7 @@
           value={dateState.input} on:input={inputDate} placeholder="R7.10.22">
       </td>
       <td>
+        <input aria-label="日付の文字サイズ" class="variant-glass-primary" type="number" style="width:4rem" min="1" max="400" step="1" bind:value={$settings.mid_font_size}>
         <select aria-label="日付の表示形式" bind:value={$settings.date_format}>
           <option value="gregorian">西暦</option>
           <option value="wareki">和暦</option>
@@ -259,10 +252,10 @@
         下段
       </td>
       <td >
-        <input class="variant-glass-primary" style="width:6rem"  bind:value={$settings.btm_str}>
+        <input class="variant-glass-primary" style="width:6rem"  aria-label="下段の文字列" bind:value={$settings.btm_str}>
       </td>
       <td>
-        <input class="variant-glass-primary" type="number" style="width:4rem" bind:value={$settings.btm_font_size}>
+        <input class="variant-glass-primary" type="number" style="width:4rem" aria-label="下段の文字サイズ" min="1" max="400" step="1" bind:value={$settings.btm_font_size}>
       </td>
     </tr>
     <tr>
@@ -270,7 +263,7 @@
         サイズ
       </td>
       <td >
-        <input type="number" class="variant-glass-primary" style="width:6rem"  bind:value={$settings.output_size}>
+        <input type="number" class="variant-glass-primary" style="width:6rem"  aria-label="出力サイズ（px）" min="1" max="4096" step="1" bind:value={$settings.output_size}>
       </td>
       <td>
         px
@@ -279,9 +272,9 @@
   </table>
 </fieldset>
 <div style="display:flex;justify-content:center;margin-top:5px">
-    <button class="save" disabled={busy || !ready || !!dateState.error} on:click={save}>保存</button>
+    <button class="save" disabled={busy || !ready || !!dateState.error || !!imageError} on:click={save}>保存</button>
 </div>
-{#if dirty && !storageMessage}
+{#if dirty && (!storageMessage || storageMessage.startsWith('○'))}
   <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
 {/if}
 <div class="storage-actions">
@@ -318,10 +311,10 @@
   button{
     width: fit-content;
   }
-  button :hover{
+  button:hover{
     opacity: 0.8;
   }
-  button :active{
+  button:active{
     opacity: 0.6;
   }
   .main{
@@ -371,6 +364,9 @@
     gap: 4px;
     margin: 8px;
     font-size: 14px;
+  }
+  .storage-success {
+    color: #18794E;
   }
   .storage-warning {
     color: #8A5700;
