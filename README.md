@@ -31,7 +31,7 @@ Yarn Classic が Tauri / Cargo 間の `--` を消す場合があるため、rele
 Windows の実機確認、Mac の起動手順、検証範囲は [開発・検証手順](docs/development.md) を参照。Mac の既存検証は stable Rust **1.99.1** で実施し、固定版 **1.95.0** での検証は未実施。
 GitHub Actions の [Windows CI](.github/workflows/windows.yml) は push / pull_request ごとに Windows、Rust **1.95.0**、Node **24**、Yarn **1.22.22** で依存復元・型チェック・Rust check / test・Tauri release build（bundle なし）を順に実行する。CI の実行結果と GUI / clipboard の実機確認は別途記録する。
 
-アプリの identifier は **`jp.tyaro.estamp`** に確定した。Store の MSIX Identity Name / Publisher 割当値は取得済み（2026-10-30 00:51 JST、ユーザー共有）。正式値は [公開方針](docs/store/estamp-release-policy.md#store-識別情報取得済みmanifest-反映は-pr-07) を参照し、正式 manifest への反映は PR-07 で行う。
+アプリの identifier は **`jp.tyaro.estamp`** に確定した。Store の Product identity 全5項目は取得済み（Identity Name / Publisher / PublisherDisplayName は 2026-10-30 00:51 JST、Store ID・PFN は 2026-10-30 01:34 JST、いずれもユーザー共有）。正式値は [公開方針](docs/store/estamp-release-policy.md#store-識別情報取得済みmanifest-反映は-pr-07) を参照し、正式 MSIX manifest への反映・照合は PR-07 で行う。
 Vite は `TAURI_ENV_PLATFORM` / `TAURI_ENV_DEBUG` を参照し、フロントへ公開する Tauri 環境変数を `TAURI_ENV_` に限定する。
 設定の `$schema` は固定 CLI 2.12.4 同梱のローカルファイルを参照するため、エディタ検証には依存復元が必要。
 

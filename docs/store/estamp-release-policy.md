@@ -1,6 +1,6 @@
 # estamp 初回公開方針・識別情報（PR-00）
 
-決定日: 2026-10-29（JST）、著作権者・権利表記の確定: 2026-10-30 00:06 JST。ユーザー指定の確定仕様に基づく。著作権者 Banto Works と権利表記、発行元表示名 Banto Works は確定。Store の Identity Name / Publisher / PublisherDisplayName は取得済み（取得日 2026-10-30 00:51 JST、ユーザー共有）。Store ID・PFN は未取得として区別する。
+決定日: 2026-10-29（JST）、著作権者・権利表記の確定: 2026-10-30 00:06 JST。ユーザー指定の確定仕様に基づく。著作権者 Banto Works と権利表記、発行元表示名 Banto Works は確定。Store の Identity Name / Publisher / PublisherDisplayName は取得済み（取得日 2026-10-30 00:51 JST、ユーザー共有）。Store ID・PFN も取得済み（取得日 2026-10-30 01:34 JST、ユーザー共有）で、Product identity は全5項目取得済み。
 
 ## 実装基準と範囲
 
@@ -45,22 +45,22 @@ MIT 本文はリポジトリ直下に置く。Tauri は `bundle.licenseFile` で
 
 ## Store 識別情報：取得済み（manifest 反映は PR-07）
 
-Partner Center の対象製品 estamp の Product identity は、**取得日 2026-10-30 00:51 JST、ユーザー共有**。以下の Identity Name / Publisher / PublisherDisplayName は取得済みで、発行元表示名 Banto Works は確定。本作業は文書への記録のみで、Partner Center の操作や manifest・ビルド設定への反映は行っていない。Store ID・PFN は未取得のためプレースホルダを残す。
+Partner Center の対象製品 estamp の Product identity は、全5項目取得済み。Identity Name / Publisher / PublisherDisplayName は **取得日 2026-10-30 00:51 JST、ユーザー共有**、Store ID・PFN は **取得日 2026-10-30 01:34 JST、ユーザー共有**として以下に記録し、発行元表示名 Banto Works は確定。本作業は文書への記録のみで、Partner Center の操作や manifest・ビルド設定への反映は行っていない。残作業はアカウント確認・名前予約の記録と、PR-07 での正式 MSIX manifest への反映・同一製品の値との照合。
 
 | 転記先の項目 | 正式値・状態 | 正式値の取得元 |
 | --- | --- | --- |
 | MSIX `Identity Name` | `BantoWorks.estamp` | 対象製品の Product identity にある Package/Identity/Name |
 | MSIX `Identity Publisher` | `CN=693ED4F8-A2A3-4AAE-8CCD-20F290A93133` | 同じ画面の Package/Identity/Publisher（`CN=...` を含む文字列全体） |
 | Store の発行元表示名 | `Banto Works`（確定） | 同じ画面の Package/Properties/PublisherDisplayName（ユーザー共有） |
-| Store ID | `<PARTNER_CENTER_STORE_ID>`（未取得） | 同じ製品に割り当てられた Store ID |
-| Package Family Name（PFN） | `<PARTNER_CENTER_PACKAGE_FAMILY_NAME>`（未取得） | 同じ製品の Package family name |
+| Store ID | `9NTXS3JXRFJ1`（取得済み、取得日 2026-10-30 01:34 JST、ユーザー共有） | 同じ製品に割り当てられた Store ID |
+| Package Family Name（PFN） | `BantoWorks.estamp_z3s61ghvmrp82`（取得済み、取得日 2026-10-30 01:34 JST、ユーザー共有） | 同じ製品の Package family name |
 
 転記手順:
 
 1. 本人が Partner Center の対象アカウント・発行元を確認し、estamp のアプリ名を予約する。希望名の利用可否・予約完了を記録する。
 2. Identity Name / Publisher / PublisherDisplayName は、2026-10-30 00:51 JST のユーザー共有に基づき上表へ転記済み。アカウントの秘密情報や証明書秘密鍵は記録しない。
-3. 未取得の Store ID・PFN は、同じ製品の正式値が共有されたらプレースホルダを置き換え、取得日・対象製品・確認者を添えて「取得済み」に更新する。
-4. PR-07 で正式 manifest の `Identity Name` / `Publisher` 等へ転記し、同じ製品の値であることを照合する。正式 MSIX の受け入れ前に未取得値をすべて解消する。
+3. Store ID・PFN は、2026-10-30 01:34 JST のユーザー共有に基づき、対象製品 estamp の取得済み値として上表へ転記済み。
+4. PR-07 で正式 MSIX manifest の `Identity Name` / `Publisher` 等へ取得済み値を反映し、正式 MSIX の受け入れ前に Store ID・PFN を含む全5項目が同じ製品の値であることを照合する。
 
 **`CN=Banto Works` などを推測で作らない。** Tauri identifier **`jp.tyaro.estamp` は変更せず**、MSIX Identity とは別の値として扱う。Tauri identifier、発行元表示名、MSIX Identity、Store ID、PFN を流用・相互変換しない。Tauri の `bundle.publisher` は MSIX `Identity Publisher` の設定ではない。MSIX の生成・署名や Partner Center の操作は PR-00 の実装には含めない。
 
@@ -75,7 +75,7 @@ Partner Center の対象製品 estamp の Product identity は、**取得日 202
 
 | 担当 | 渡す内容と期限 |
 | --- | --- |
-| 本人・セキュリティ／リリース | 発行元表示名 Banto Works は確定、Identity Name / Publisher / PublisherDisplayName は取得・文書転記済み。アカウント確認・名前予約の記録と未取得の Store ID・PFN の共有は残作業。manifest への転記・照合は PR-07 |
+| 本人・セキュリティ／リリース | 発行元表示名 Banto Works は確定、Store ID・PFN を含む Product identity 全5項目は取得・文書転記済み。残作業はアカウント確認・名前予約の記録と、PR-07 での正式 MSIX manifest への反映・照合 |
 | 企画 | この初回範囲・無料方針を掲載文とプライバシー骨子へ反映。公開 URL・サポート連絡先・最終原稿は PR-09 まで |
 | デザイン | 両書体の必要ウエイトとライセンス資料を PR-03 前、アイコン原本・小さな通常画面を前提にした画面仕様を PR-06 前まで |
 | 品質 | Windows 11 x64 端末を確保し、PR-07 試作時に OS ビルド・WebView2 等を記録。PR-08 で最終品質確認 |
@@ -85,7 +85,7 @@ Partner Center の対象製品 estamp の Product identity は、**取得日 202
 
 1. **発行元表示名（確定）:** Banto Works（`bundle.publisher` / `PublisherDisplayName`）は、2026-10-30 00:51 JST のユーザー共有により確定。
 2. **Partner Center アカウント確認・名前予約:** 本人が対象アカウント・発行元を確認し、estamp の名前の利用可否・予約完了を記録する。
-3. **Product identity の文書転記（3項目取得済み）:** Identity Name / Publisher / PublisherDisplayName は、取得日 2026-10-30 00:51 JST、対象製品 estamp、ユーザー共有として上表に記録済み。未取得の Store ID・PFN の共有と正式 manifest への転記・照合は PR-07 の正式 MSIX 受け入れ前までに行う。
+3. **Product identity の文書転記（全5項目取得済み）:** Identity Name / Publisher / PublisherDisplayName は取得日 2026-10-30 00:51 JST、Store ID・PFN は取得日 2026-10-30 01:34 JST、いずれも対象製品 estamp、ユーザー共有として上表に記録済み。正式 MSIX manifest への反映と全5項目の照合は PR-07 の正式 MSIX 受け入れ前までに行う。
 4. **既存配布物の情報提供（存在する場合）:** 旧ポータブル版などの所在・入手経路・利用者環境の設定実物と保存場所を提供する。開発用サンプルだけで旧版互換を確認済みとせず、追加対応は別途判断する。
 5. **部門への手配:** 企画へ無料方針・初回機能と掲載／プライバシー骨子、デザインへ PR-03 前の書体ウエイト／ライセンス資料と PR-06 前の画面・アイコン、品質へ Windows 11 x64 端末確保を依頼する。本作業では依頼メッセージの送信・外部アカウント操作を行っていない。
 
