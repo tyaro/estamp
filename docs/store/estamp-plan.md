@@ -173,7 +173,27 @@ clipboard は書込みに必要な権限だけを付与し、読取りは使わ�
 - 開発時のperformance marks／`window.__estampPerformance` を追加。計測専用ビルドだけ、固定3イベントのnavigation時刻とRust main開始からの時刻をWindowsハーネスへ書ける。通常ビルドはファイル出力無効・UI追加なし。二重requestAnimationFrameの描画時刻は実ペイントの近似であり、実機録画で照合する。
 - [Windows確認手順](../verification/pr05-windows-check.md) と `scripts/verify/` のPowerShell3本を追加。3コールドスタート、Mincho読込前後のestamp＋子WebView2のWorking Set/private bytes、未インストール書体の別名、プレビューcropとPNG字形、50/100/200px・alpha・形式・連続操作・Paint/Office・オフラインを記録する。既存設定があれば停止し、作成した試験設定だけを所有トークン付きで片付ける。既存プロセスは終了しない。
 
-Mac検証の結果と警告は [開発手順](../development.md#pr-05-画像出力とwindowsへの引継ぎ) に記録する。Windows 11実機の起動・メモリの数値、実PNG字形・alpha・OS形式・Paint/Word/Excelへの貼付け、PowerShellの実行確認は未実施。暫定閾値（初回描画1秒・fonts ready3秒・合計private増加300MB）を超えたら要調査として次担当へ渡す。PR-06のUI/CSP確定、PR-07のMSIX生成・容量・更新保持は本段階の範囲外。
+Mac検証の結果と警告は [開発手順](../development.md#pr-05-画像出力とwindowsへの引継ぎ) に記録する。PR-06のUI/CSP確定、PR-07のMSIX生成・容量・更新保持は本段階の範囲外。
+
+2026-10-30 JST 実施記録（PR-05、Windows実機、03:41 JST）:
+
+- MSI PC、`eb4df78`、Windows 11 Pro 26H2（26300.9711）、Core Ultra 7 155H／RAM 31.7 GiB、DPI150%、WebView2 156.0.4314.50。通常ユーザー・他作業あり、OS再起動／キャッシュ削除／回線遮断なし。Rust・Cargo stable 1.99.1で計測／通常ビルドを `--locked --offline -j 2` により順次成功（固定Rust 1.95.0は未検証）。詳細と証拠の所在は [Windows確認結果](../verification/pr05-windows-check.md#2026-10-30-実施結果)、元レポートは `outputs/pr05-windows-result.md`。
+- 合格: OS未登録の同梱別名による部署名・髙・邊・和暦の字形（BIZ原名はOSに存在、`local()` なし）、4本TTF・2本OFLの原本ハッシュ一致、文字列・各サイズ・日付の保存／再起動復元。50/100/200pxのネイティブPNG実寸・alpha（四隅0）、100pxのPaint／Word／Excel貼付け、200pxで10回連続クリック（最終PNGハッシュ一致）、未入力／0／1.5／4097pxの日本語エラーと保存／コピー無効・訂正復旧。
+- 接続下の代替検査は合格: distに外部フォントURL候補なし、通常ビルドのWebView2 NetLogで同梱TTFへの要求4件・外部フォント要求0。WebView2基盤の外部通信はあり、PC全体の無通信は主張しない。通常ビルドの起動・画像コピー・ライセンス表示を確認し、`ESTAMP_PR05_METRICS` 指定時も計測CSVなし・UI計測値なし。
+
+3回とも全estamp終了後のプロセスコールドスタート、OSキャッシュは残存。時間はms、private増加はMiB（最初の観測→ピーク、観測前の割当は含まない）。描画はJSイベントによる近似。
+
+| 回 | 描画近似（Rust main基準） | fonts-ready（同） | JS navigation基準 描画/書体 | private増加 |
+| --- | ---: | ---: | --- | ---: |
+| 1 | 2278 | 2660 | 253 / 713 | 309.5 |
+| 2 | 1824 | 2180 | 244 / 665 | 263.6 |
+| 3 | 1730 | 2172 | 372 / 1098 | 266.0 |
+
+- 解釈: JS navigation基準のfonts-readyは全回1.1秒未満。Rust main→描画近似の遅延の大部分は書体待ちよりnavigation前（WebView2起動等）にあるとみられる（native値はIPC遅延を含む）。描画近似は全回で暫定1秒超、private増加は1回目309.5MiBで暫定300MiBを9.5MiB超過し、要調査。fonts-ready（Rust main基準）は全回3秒以内。Handle観測が1秒以内でも実描画の証明にはならない。
+- 次の対応: 画面録画による実ペイント時刻の確定、負荷・観測条件を記録したメモリ再測定を先に行う。その結果を見てからPR-03の方針どおり、必要ならまずBIZ UDPGothicのみのサブセット化を検討する。既存の画面時刻試行は背面化で他アプリの画素を拾い不採用。実ペイント1秒の合否は未確認。
+- 未確認: 実ペイント時刻、コピー処理中の入力変更による中止経路、書体読込失敗／設定保存先書込不可／クリップボード占有時の失敗と再試行、DPI100%比較、回線遮断下での起動・編集・保存・コピー。
+- デザインレビュー: 長い氏名「国際事業推進部 髙橋渡邊」は収まるが100pxでは横縮小で密集し判読しづらい。文字サイズ・余白の評価が必要。
+- 実機でのスクリプト不備を反映: PowerShell3本をUTF-8 BOM付きで保持し、手順は `pwsh -STA` を推奨。描画判定をHandle／JS近似／画面録画に分離し、録画列は「実ペイント未確認」と明記。cropにはCSS px×表示倍率の物理px換算（150%で100→150px）とポインター退避の例を追加。修正後のWindows再実行は未実施。
 
 ### PR-06：UI・権限・CSP を提出仕様に固定（0.75〜1.25 人日）
 

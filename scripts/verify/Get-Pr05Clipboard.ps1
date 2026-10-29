@@ -1,10 +1,11 @@
-# Windows PowerShell 5.1 -STA で実行。アプリ権限とは別の検証ツールでクリップボードを読む。
+﻿# pwsh -STA で実行（Windows PowerShell 5.1にも対応）。UTF-8 BOM付きで保存する。
+# アプリ権限とは別の検証ツールでクリップボードを読む。
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$OutputDirectory,
       [Parameter(Mandatory=$true)][ValidateRange(1,4096)][int]$ExpectedSize,
       [int]$Left=0, [int]$Top=0, [int]$Width=0, [int]$Height=0)
 $ErrorActionPreference = 'Stop'
-if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'powershell.exe -STA -File で実行してください' }
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'pwsh -STA -File（または powershell.exe -STA -File）で実行してください' }
 if (Test-Path $OutputDirectory) { throw '出力先は未存在のディレクトリにしてください' }
 New-Item -ItemType Directory $OutputDirectory | Out-Null
 Add-Type -AssemblyName System.Windows.Forms

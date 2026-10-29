@@ -1,4 +1,4 @@
-# 計測用ビルド専用。既存の設定ディレクトリがあれば停止する。
+﻿# 計測用ビルド専用。既存の設定ディレクトリがあれば停止する。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$Exe,
@@ -88,7 +88,10 @@ try {
             StampRenderNativeMainMs=$nativeMetrics['first-stamp-render'];
             BaselinePrivateMB=$totals[0].PrivateBytes/1MB; PeakPrivateMB=($totals | Measure-Object PrivateBytes -Maximum).Maximum/1MB;
             AfterPrivateMB=$totals[-1].PrivateBytes/1MB; IncreaseMB=$increase;
-            FlagPaint=($windowMs -gt 1000 -or $nativeMetrics['first-window-paint'] -gt 1000);
+            WindowHandleStatus=$(if ($null -eq $windowMs) { '未観測' } elseif ($windowMs -gt 1000) { '暫定1秒超（Handleのみ）' } else { '1秒以内（Handleのみ）' });
+            JsPaintApproximationStatus=$(if (-not $nativeMetrics.ContainsKey('first-window-paint')) { '未計測' }
+                elseif ($nativeMetrics['first-window-paint'] -gt 1000) { '暫定1秒超（JS近似）' } else { '1秒以内（JS近似）' });
+            ScreenRecordingPaintStatus='実ペイント未確認';
             FlagFonts=($nativeMetrics['fonts-ready'] -gt 3000); FlagMemory=($increase -gt 300);
             MissingMetrics=($metrics.Count -ne 3 -or $nativeMetrics.Count -ne 3) }
         if (-not $started.HasExited -and $started.StartTime -eq $identity) {
@@ -99,7 +102,8 @@ try {
         Start-Sleep -Milliseconds 500
     }
     $summary | Export-Csv (Join-Path $OutputDirectory 'summary.csv') -NoTypeInformation -Encoding UTF8
-    $summary | Format-Table
+    # This script does not record the screen; neither Handle nor JS proves real paint.
+    $summary | Format-Table Run,WindowHandleStatus,JsPaintApproximationStatus,ScreenRecordingPaintStatus -AutoSize -Wrap
 } finally {
     if ($started) {
         $started.Refresh()

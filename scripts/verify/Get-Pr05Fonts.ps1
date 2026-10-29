@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$OutputDirectory, [string]$Dist = '.\dist')
 $ErrorActionPreference = 'Stop'
 if (Test-Path $OutputDirectory) { throw '出力先は未存在のディレクトリにしてください' }
