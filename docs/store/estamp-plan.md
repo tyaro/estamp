@@ -2,7 +2,7 @@
 
 作成日: 2026-10-22（JST）／発行元表示名: **Banto Works（暫定）**
 
-2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。最新の実装・検証は [PR-01 第5回結果](../../outputs/pr01-final5.md) を参照。
+2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。開発手順と検証範囲は [開発・検証手順](../development.md) を参照。
 
 2026-10-29 PR-00 決定追記（権利表記は 2026-10-30 00:06 JST のユーザー決定で確定）: 今回の実装基準は PR-01 マージ済みの **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**、作業ブランチは `feat/pr-00-release-identity`。公開条件・確定した権利表記・暫定の発行元表示名・Store 値のプレースホルダと転記手順は [公開方針](estamp-release-policy.md) を正とする。本体 MIT、著作権者 Banto Works、`Copyright (c) 2026 Banto Works` は確定。書体は UI＝BIZ UDPゴシック、印影＝しっぽり明朝 B1 に決定（実装は PR-03）。小さな印影だけの起動画面は意図した仕様として維持する。日付の直接入力等は既に確定した [デザイン仕様](../design/estamp-design-rules.md) が本計画の旧記述より優先し、実装は PR-04 のままとする。
 
@@ -35,7 +35,7 @@
 | 権限 | `api-all`、`allowlist.all = true`、`csp = null` | v2 の capabilities と本番 CSP を設計し直す |
 | ライセンス・メタデータ | Cargo の `license` は空欄、著者は `you`、version は 0.0.0、LICENSE はない | MIT と権利者の明記、発行元・製品情報・版番号を整える |
 
-主な根拠（作成時コミット `8599f0e` のリポジトリ相対パス・当時の行番号）: `src-tauri/Cargo.toml:1`、`src-tauri/Cargo.lock:2909`、`yarn.lock:173`、`src/App.svelte:22`、`src-tauri/src/main.rs:36`、`src-tauri/tauri.conf.json:13`。
+主な根拠（作成時コミット `8599f0e` の調査対象。リンクは現在のファイルへの相対パス）: [Cargo.toml](../../src-tauri/Cargo.toml)、[Cargo.lock](../../src-tauri/Cargo.lock)、[yarn.lock](../../yarn.lock)、[App.svelte](../../src/App.svelte)、[main.rs](../../src-tauri/src/main.rs)、[tauri.conf.json](../../src-tauri/tauri.conf.json)。
 
 ## 3. 先に決める論点と推奨判断
 
@@ -48,7 +48,7 @@
 | 設定と旧版互換 | PR-00 で開発用 `src-tauri/Setting.json` を schema の参照用サンプルとして確認し公開方針に記録。利用者環境の実物・実際の保存場所は未確認。`app_config_dir()` への変更と明示的インポートは PR-02。別配布版との自動移行は約束しない | 基準確認は PR-00 記録済み、実装は開発／PR-02 |
 | ポータブル版 | 決定済み: 初回の新規成果物には含めない。既存配布物の所在・入手経路は未確認で本人からの情報待ち。判明したら旧版として案内し、追加対応は別 PR | 開発・企画／PR-00 決定済み |
 | 和暦の仕様 | デザイン仕様で確定済みの元号・受付範囲に従う。内部では時刻を持たない年月日とし、元号境界・範囲外を検証する | 企画・開発・デザイン／仕様確定済み、実装は PR-04 |
-| 手入力の仕様 | デザイン仕様を優先し、和暦直接入力を初回に含める（受付形式・正規化・検証は同仕様 §3）。任意文字列の印字は範囲外 | 企画・デザイン／仕様確定済み、実装は PR-04 |
+| 手入力の仕様 | デザイン仕様 §3 で確定済み: 西暦年月日と和暦文字列の直接入力に対応（M/T/S/H/R・漢字元号・元年・NFKC正規化）。明治6年（1873-01-01）以降を検証し、元号の期間外は正しい表記を添えてエラー。任意文字列の印字は範囲外 | 企画・デザイン／仕様確定済み、実装は PR-04 |
 | 今日の日付と再起動 | 自動日付モードでは起動時・日付変更時に端末のローカル日付へ追従。手動日付は再起動後も保持。「今日に戻す」で自動へ戻る | 開発・品質／PR-02 の schema 確定時 |
 | 書体 | 選定済み: UI は BIZ UDPゴシック（BIZ UDPGothic）、印影はしっぽり明朝 B1（Shippori Mincho B1）。必要なウエイトを原配布ファイルのまま同梱し、サブセット化・形式変換は初回に行わない | 選定は PR-00 記録済み、ウエイト・同梱・OFL 確認は PR-03 |
 | ライセンス部品の時期 | 決定済み: R1・R2 を公開後に実施。estamp では課金・機能制限を加えず、有料本体／試用の実機試験は後続アプリで実施 | 開発・企画／PR-00 決定済み |
@@ -110,11 +110,11 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 ### PR-04：日付の正常化・和暦・手入力（1.5〜2.5 人日）
 
 - **目的:** 今日の日付と指定日を、誤日付・日付ずれなく印影へ反映する。
-- **変更範囲:** 日付の計算・検証を UI から分離。日付のみの `YYYY-MM-DD` を内部表現にし、西暦表示 `yyyy.mm.dd`、和暦表示、日付入力、今日に戻すを追加。元年／1年の表記、対応下限、長い和暦の収まり方をデザイン部と確定。
+- **変更範囲:** 日付の計算・検証を UI から分離。日付のみの `YYYY-MM-DD` を内部表現にし、西暦表示 `yyyy.mm.dd`、和暦表示、西暦年月日・和暦文字列の直接入力、今日に戻すを追加。元年表記・明治6年（1873-01-01）の対応下限・入力の正規化と検証は確定したデザイン仕様 §3 に従う。長い和暦の収まり方は PR-03 の書体を使って確認する。
 - **依存関係:** PR-01・02。書体を使った見た目の確定は PR-03 後。
 - **担当:** 開発、仕様確認は企画・デザイン、境界確認は品質。
 - **受け入れ条件:** `getFullYear()`／`getMonth()`／`getDate()` 等を正しく使い、UTC 変換を挟んで日がずれない。空欄・存在しない日付・範囲外を検出し、最後の正常値を維持する。2019-04-30／05-01、1989-01-07／01-08、うるう日、年末年始、元年表記を検証。任意の固定日を注入できる意味のある日付テストを設ける。自動モードは日付変更・復帰時に再計算し、手動モードは日付を保持する。入力、保存、プレビュー、コピーが同じ日付を使う。
-- **範囲の線引き:** 「和暦表示の切替」と「和暦を文字列で直接入力する解析器」は別機能。初回は西暦年月日入力から和暦へ表示する仕様とし、掲載文もその通りにする。新元号への追従は採用方式を記録し、永続的な自動対応を保証しない。
+- **範囲の線引き:** 確定したデザイン仕様に従い、西暦年月日入力・和暦表示に加えて和暦文字列の直接解析を含む。明治6年（1873-01-01）より前は「旧暦は未対応」、各元号の期間外は正しい元号表記を添えてエラーとする。任意文字列の印字は含めない。元号は明治〜令和の開始日テーブルで判定し、新元号はテーブルの更新と境界テストの追加で対応する（永続的な自動対応は保証しない）。
 
 ### PR-05：印影編集・PNG 生成・画像コピーの完成（0.75〜1.25 人日）
 
@@ -149,7 +149,7 @@ Tauri の独自登録コマンドには既定で全ウィンドウから呼べ�
 
 Tauri の標準 bundler が出す EXE／MSI と、今回の MSIX 提出経路を混同しない。Microsoft は Tauri の実行ファイルを winapp CLI で MSIX 化する手順を公開している。CLI の版を固定し、その版の `pack`／`package` 等の実コマンドとオプションを PR に記録する。Store 提出前の CA 証明書購入は前提にせず、Store 側の MSIX 署名とローカル検証の開発署名を分ける。[Microsoft: Tauri と winapp CLI](https://learn.microsoft.com/en-us/windows/apps/dev-tools/winapp-cli/guides/tauri)
 
-表示名 **Banto Works**、Tauri identifier、MSIX Identity Name、Identity Publisher（例: Store 割当の `CN=...`）、Store ID、PFN はそれぞれ別の値として管理する。Publisher に表示名を推測で入れない。[Microsoft: Product identity](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
+発行元表示名 **Banto Works（暫定）**、Tauri identifier、MSIX Identity Name、Identity Publisher（例: Store 割当の `CN=...`）、Store ID、PFN はそれぞれ別の値として管理する。Publisher に表示名を推測で入れない。[Microsoft: Product identity](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
 
 通常の Tauri Win32 プロセスを full trust で包装するなら、manifest の **`runFullTrust` は restricted capability** として扱い、必要理由を提出情報へ書く。これは管理者昇格とは別である。評価資料の「restricted capability も不要」は、この MSIX 構成では修正する。[Microsoft: desktop MSIX manifest](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)
 
