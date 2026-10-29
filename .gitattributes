@@ -1,0 +1,3 @@
+# Bundled third-party font files and their license texts must stay byte-identical to upstream
+# (hashes are recorded in THIRD-PARTY-NOTICES.md), so never convert line endings.
+public/fonts/** -text

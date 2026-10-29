@@ -1,8 +1,6 @@
 import { writable } from 'svelte/store';
 
 export type Setting = {
-	// Keep future JSON fields when spreading settings into a save snapshot.
-	[key: string]: unknown,
 	schema_version: number,
 	top_str:string,
 	top_font_size:number,

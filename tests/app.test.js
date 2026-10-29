@@ -5,15 +5,20 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { get, writable } from 'svelte/store';
 import * as dates from '../src/date.js';
-import { saveSettings } from '../src/save.js';
+import { saveSettings, settingsSnapshot } from '../src/save.js';
 
 // Execute the production App handlers, including their post-await code. Only the
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
 const source = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
-const compiled = ts.transpileModule(script, {
+const transpile = code => ts.transpileModule(code, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText;
+const compiled = transpile(script);
+// Re-run the production reactive statements when the fake DOM flushes.
+const reactive = ts.createSourceFile('App.js', compiled, ts.ScriptTarget.ES2022, true)
+  .statements.filter(statement => ts.isLabeledStatement(statement) && statement.label.text === '$')
+  .map(statement => statement.getText()).join('\n');
 
 function deferred() {
   let resolve, reject;
@@ -37,7 +42,7 @@ function app({
   let now = new Date(2025, 11, 31, 23, 59, 59);
   const gate = deferred();
   const reached = deferred();
-  const events = { writes: [], closed: 0, success: [], error: [], sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
+  const events = { renders: [], writes: [], closed: 0, success: [], error: [], sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
   const image = { close: async () => { events.closed++; } };
   const boundary = async stage => {
     if (stage === pause) {
@@ -59,6 +64,7 @@ function app({
     outerHTML: '', width: { baseVal: { value: 100 } }, height: { baseVal: { value: 100 } },
   };
   const flush = async () => {
+    run(reactive);
     const state = run('dateState');
     const config = get(settings);
     svg.outerHTML = `<svg>${JSON.stringify([
@@ -68,7 +74,7 @@ function app({
   };
   const imports = {
     canvg: { Canvg: { fromString: (_ctx, text) => ({
-      resize() {}, render: async () => { image.svg = text; await boundary('render'); },
+      resize() {}, render: async () => { events.renders.push(text); image.svg = text; await boundary('render'); },
     }) } },
     './store': { settings },
     svelte: { onMount(callback) { mount = callback; }, tick: flush },
@@ -90,7 +96,8 @@ function app({
     './date.js': {
       ...dates, restoreDate: config => dates.restoreDate(config, now), todayState: () => dates.todayState(now), refreshDate: state => dates.refreshDate(state, now),
     },
-    './save.js': { saveSettings },
+    './save.js': { saveSettings, settingsSnapshot },
+    './fonts.js': { loadStampFonts: async () => { await boundary('fonts'); } },
   };
   context = vm.createContext({
     // Svelte declares these reactive assignment targets when it compiles the DOM.
@@ -116,9 +123,9 @@ function app({
   // `$settings = config` in App after a save makes the regression test fail.
   Object.defineProperty(context, '$settings', { get: () => get(settings), set: value => settings.set(value) });
   run(compiled);
-  run('busy = false; ready = true');
+  run('busy = false; ready = true; fontsReady = true');
   return {
-    settings, events, gate, reached, run, mount: () => mount(),
+    settings, events, gate, reached, run, flush, mount: () => mount(),
     load: () => run('load()'), importLegacy: () => run('importLegacy()'),
     copy: () => run('clipboardCopy()'), save: () => run('save()'),
     edit: input => run(`inputDate({ currentTarget: { value: ${JSON.stringify(input)} } })`),
@@ -189,11 +196,63 @@ test('App preserves edits after the save handler completes and saves them next t
   assert.equal(ui.run('revision'), 'saved revision');
   assert.deepEqual(get(ui.settings), edited);
   assert.equal(ui.run('dateState'), editedDate);
-  assert.deepEqual(ui.events.success, ['保存しました']);
+  assert.deepEqual(ui.events.success, []);
+  assert.equal(ui.run('dirty'), true);
+  assert.match(ui.run('storageMessage'), /未保存の変更があります/);
   await ui.save();
   assert.deepEqual(ui.events.sent[1], { ...edited, date_mode: 'manual', manual_date: '2024-02-29' });
   assert.deepEqual(ui.events.revisions, [null, 'saved revision']);
+  assert.equal(ui.run('dirty'), false);
+  assert.deepEqual(ui.events.success, ['保存しました']);
 });
+
+test('App clears the save-during-edit warning when edits revert to the saved values', async () => {
+  const pending = deferred();
+  const ui = app({ persist: () => pending.promise });
+  ui.edit('R7.10.22');
+  const saved = { ...get(ui.settings) };
+  const saving = ui.save();
+  ui.settings.update(value => ({ ...value, btm_str: '編集中' }));
+  ui.edit('R6.2.29');
+  pending.resolve('saved revision');
+  await saving;
+  await ui.flush();
+  assert.equal(ui.run('dirty'), true);
+  assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
+  assert.deepEqual(ui.events.success, []);
+
+  ui.settings.set(saved);
+  await ui.flush();
+  assert.equal(ui.run('dirty'), true);
+  assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
+  ui.edit('R7.10.22');
+  await ui.flush();
+  assert.equal(ui.run('dirty'), false);
+  assert.equal(ui.run('storageMessage'), '');
+  assert.equal(ui.events.sent.length, 1);
+});
+
+for (const message of [
+  '× 保存に失敗しました：disk full',
+  '× 保存に失敗しました：stale revision',
+  '△ 設定ファイルが破損していたため退避しました',
+  '△ 未保存の変更があります △ 旧設定の有無を確認できませんでした：read failed',
+]) {
+  test(`App keeps other storage messages when edits revert: ${message}`, async () => {
+    const ui = app();
+    await ui.load();
+    const saved = { ...get(ui.settings) };
+    ui.settings.update(value => ({ ...value, btm_str: '編集中' }));
+    ui.run(`storageMessage = ${JSON.stringify(message)}`);
+    await ui.flush();
+    assert.equal(ui.run('dirty'), true);
+    assert.equal(ui.run('storageMessage'), message);
+    ui.settings.set(saved);
+    await ui.flush();
+    assert.equal(ui.run('dirty'), false);
+    assert.equal(ui.run('storageMessage'), message);
+  });
+}
 
 test('App save guards invalid input and preserves edits on failure', async () => {
   const pending = deferred();
@@ -215,13 +274,53 @@ test('App save guards invalid input and preserves edits on failure', async () =>
   assert.deepEqual(ui.events.success, []);
 });
 
+test('App reports unsaved invalid date input typed during a successful save', async () => {
+  const pending = deferred();
+  const ui = app({ persist: () => pending.promise });
+  const saving = ui.save();
+  ui.edit('R');
+  pending.resolve('saved revision');
+  await saving;
+  assert.equal(ui.run('revision'), 'saved revision');
+  assert.equal(ui.run('dirty'), true);
+  assert.match(ui.run('storageMessage'), /未保存/);
+  assert.deepEqual(ui.events.success, []);
+});
+
+test('App waits for fonts before rendering the first copied image', async () => {
+  const ui = app({ pause: 'fonts' });
+  const copying = ui.copy();
+  await ui.reached.promise;
+  await new Promise(setImmediate);
+  assert.deepEqual(ui.events.renders, []);
+  assert.equal(ui.events.closed, 0);
+  assert.deepEqual(ui.events.writes, []);
+  ui.gate.resolve();
+  await copying;
+  assert.equal(ui.events.renders.length, 1);
+  assert.equal(ui.events.writes.length, 1);
+});
+
+test('App blocks copy until the initial font load completes', async () => {
+  const ui = app({ pause: 'fonts' });
+  ui.run('fontsReady = false');
+  const preparing = ui.run('prepareFonts()');
+  await ui.reached.promise;
+  await ui.copy();
+  assert.deepEqual(ui.events.writes, []);
+  ui.gate.resolve();
+  await preparing;
+  assert.equal(ui.run('fontsReady'), true);
+  await ui.copy();
+  assert.equal(ui.events.writes.length, 1);
+});
+
 for (const operation of ['load', 'importLegacy']) {
   for (const mode of ['manual', 'auto', 'invalid manual']) {
     test(`App ${operation} restores ${mode} dates, metadata and unknown values together`, async () => {
       const loaded = {
         settings: {
           ...initialSettings(), stamp_type: 'future_角印',
-          future_options: { nested: [true, null, '値'], enabled: false },
           date_mode: mode === 'auto' ? 'auto' : 'manual', date_format: 'wareki',
           manual_date: mode === 'invalid manual' ? 'H31.5.1' : '2019-05-01',
         },

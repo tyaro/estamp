@@ -13,7 +13,9 @@
     "withGlobalTauri": false,
     "security": {
       "csp": null,
-      "capabilities": ["main-window"]
+      "capabilities": [
+        "main-window"
+      ]
     },
     "windows": [
       {
@@ -35,7 +37,11 @@
     "license": "MIT",
     "licenseFile": "../LICENSE",
     "resources": {
-      "../LICENSE": "LICENSE"
+      "../LICENSE": "LICENSE",
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../public/fonts/bizudpgothic/OFL.txt": "licenses/fonts/bizudpgothic/OFL.txt",
+      "../public/fonts/shipporiminchob1/OFL.txt": "licenses/fonts/shipporiminchob1/OFL.txt",
+      "../licenses/skeleton-LICENSE.txt": "licenses/skeleton-LICENSE.txt"
     },
     "shortDescription": "画像の日付印を作るアプリ",
     "icon": [
