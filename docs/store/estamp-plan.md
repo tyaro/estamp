@@ -126,6 +126,7 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 - UI は BIZ UDPGothic Regular (400) / Bold (700)。本文・入力・ボタンに400、既存の表見出しとライセンス見出しに700が必要。印影は Shippori Mincho B1 Regular (400) / Bold (700)。日付を400、既存の上段・下段を700として、SVG の全テキストに明示した。使用しない500・600・800は同梱しない。
 - `google/fonts` commit `6157dfaa640ca5738b4d1a7070fe389c3036d7fc` の `ofl/bizudpgothic/` / `ofl/shipporiminchob1/` から取得済みの TTF・OFL.txt 原本を `public/fonts/<family>/` に無改変で同梱。サブセット化・形式変換なし。著作権行・原本パス・OFL 自体のハッシュは [第三者ライセンス一覧](../../THIRD-PARTY-NOTICES.md) に記録した。
 - `@font-face` は同梱ファイルのみを参照し、Google Fonts import を除去。`document.fonts.load` で印影400/700の両方を待ち、プレビューの表示と最初のCanvasコピーを制御する。読込失敗は画面表示・再試行可能。ウィンドウ寸法は変更しない。
+- 書体は当面フル同梱（サブセット化なし）を維持する。`src/fonts.js` は約30MBの Shippori Mincho B1 の読込を待つため、PR-05 または実機で初回表示時間・メモリ使用量を測定する。問題があれば、最初の対策として BIZ UDPGothic だけをサブセット化する。MSIX のサイズは PR-07 で測定する。
 - 設定下部「ライセンス」で一覧・両OFL全文・本体MIT全文をオフライン表示。Tauri resources にMIT・一覧・両OFLを指定し、`dist/fonts/` にTTFとOFLを出力する。Skeletonテーマにも外部フォントimportがあったため、配色等を保った `src/theme.css` へ切替え、外部import除去とUI書体変数だけを変更した。テーマのMIT原文も `licenses/skeleton-LICENSE.txt` に同梱し、画面表示・resources・PR-07収集の対象に含める。検査は実際にimportする依存CSSもたどる。
 - 同時修正: schema_version の null / 文字列は破損退避し、整数2は従来どおり読込・上書きを拒否する。未知フィールドはRustでRawValue原文を保持し、revision照合後に既知項目だけを合成する（既存serde_jsonのraw_value機能のみ有効化、新規crateなし）。保存完了時に現在の編集状態と保存開始時のスナップショットを比較し、差があれば「未保存の変更があります」を表示してdirtyを維持する。
 
@@ -158,6 +159,7 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 - **依存関係:** PR-01〜04。
 - **担当:** 開発。デザイン部が余白・文字の収まり、品質部が貼り付けを確認。
 - **受け入れ条件:** 書体未インストール・オフライン環境でも、プレビューとコピー画像で同じ字形になる。画面の CSS に定義したフォントは、SVG を別画像として読み込む際には継承されない場合があるため、フォント埋込み等を含めて出力経路を実証する。透明背景・指定ピクセル数・日本語・長い名前・連続クリックを確認し、Word／Excel／画像編集アプリへの貼り付けで空画像・文字化け・欠けがない。読込・保存・コピーの失敗が console のみに消えない。
+- **書体の性能確認:** 実機で初回表示時間・メモリ使用量を測定する（`src/fonts.js` は約30MBの Shippori Mincho B1 の読込を待つ）。問題があれば、まず BIZ UDPGothic だけのサブセット化を検討する。
 
 clipboard は書込みに必要な権限だけを付与し、読取りは使わない。画像 API の入力形式は採用版の仕様に従う。[Tauri clipboard 権限](https://v2.tauri.app/plugin/clipboard/)、[画像 API](https://v2.tauri.app/reference/javascript/clipboard-manager/)
 
@@ -179,6 +181,7 @@ Tauri の独自登録コマンドには既定で全ウィンドウから呼べ�
 - **担当:** 開発、署名・版管理はセキュリティ・リリース、早期 WACK と実機導入は品質。
 - **工程:** lock を使った依存復元 → Tauri release build（`--no-bundle`）→ 専用 staging へ exe・必要 DLL／resources・書体／ライセンスを収集 → 正式 manifest とアセットを合成・検証 → winapp CLI で MSIX 化 → ローカル検証用のみ開発署名 → install／update／WACK。フロントの `dist` と MSIX staging は別ディレクトリにし、target 全体を梱包しない。
 - **受け入れ条件:** 新しい Windows 環境で手順通りに再生成できる。通常ユーザーでインストール後に起動・保存・コピーでき、旧版から高い版への更新で設定が残る。Store 提出用パッケージ、検証用署名パッケージ、manifest、commit・版・ツール一覧、SHA-256、必要なシンボル／ログを紐付ける。秘密鍵や証明書パスワードをソース・成果物に含めない。
+- **書体同梱後の容量確認:** 生成した MSIX のサイズを測定・記録する。
 - **再利用の条件:** パッケージ化処理を共通にし、製品ごとに exe、resources、アセット、Identity Name／Publisher、表示名、版、対応 OS・CPU を渡す設計にする。後続二製品は各自の Store ID／PFN を持つ。同じ発行元でも estamp のアプリ識別情報をコピーしない。差替え用サンプル設定で、共通スクリプトに estamp 固有条件が埋まっていないことを確認する。
 - **早期の判断点:** WebView2 Evergreen の有無と、欠けている環境での提供方法・Store 審査条件を実機で確認する。MSIX ではインストーラーのように昇格してランタイムを勝手に追加できると想定しない。固定版同梱を選ぶ場合は容量・ライセンス・更新負担を再見積もりする。
 

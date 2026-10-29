@@ -11,9 +11,14 @@ import { saveSettings, settingsSnapshot } from '../src/save.js';
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
 const source = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
 const script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)[1];
-const compiled = ts.transpileModule(script, {
+const transpile = code => ts.transpileModule(code, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText;
+const compiled = transpile(script);
+// Re-run the production reactive statements when the fake DOM flushes.
+const reactive = ts.createSourceFile('App.js', compiled, ts.ScriptTarget.ES2022, true)
+  .statements.filter(statement => ts.isLabeledStatement(statement) && statement.label.text === '$')
+  .map(statement => statement.getText()).join('\n');
 
 function deferred() {
   let resolve, reject;
@@ -59,6 +64,7 @@ function app({
     outerHTML: '', width: { baseVal: { value: 100 } }, height: { baseVal: { value: 100 } },
   };
   const flush = async () => {
+    run(reactive);
     const state = run('dateState');
     const config = get(settings);
     svg.outerHTML = `<svg>${JSON.stringify([
@@ -119,7 +125,7 @@ function app({
   run(compiled);
   run('busy = false; ready = true; fontsReady = true');
   return {
-    settings, events, gate, reached, run, mount: () => mount(),
+    settings, events, gate, reached, run, flush, mount: () => mount(),
     load: () => run('load()'), importLegacy: () => run('importLegacy()'),
     copy: () => run('clipboardCopy()'), save: () => run('save()'),
     edit: input => run(`inputDate({ currentTarget: { value: ${JSON.stringify(input)} } })`),
@@ -199,6 +205,54 @@ test('App preserves edits after the save handler completes and saves them next t
   assert.equal(ui.run('dirty'), false);
   assert.deepEqual(ui.events.success, ['保存しました']);
 });
+
+test('App clears the save-during-edit warning when edits revert to the saved values', async () => {
+  const pending = deferred();
+  const ui = app({ persist: () => pending.promise });
+  ui.edit('R7.10.22');
+  const saved = { ...get(ui.settings) };
+  const saving = ui.save();
+  ui.settings.update(value => ({ ...value, btm_str: '編集中' }));
+  ui.edit('R6.2.29');
+  pending.resolve('saved revision');
+  await saving;
+  await ui.flush();
+  assert.equal(ui.run('dirty'), true);
+  assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
+  assert.deepEqual(ui.events.success, []);
+
+  ui.settings.set(saved);
+  await ui.flush();
+  assert.equal(ui.run('dirty'), true);
+  assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
+  ui.edit('R7.10.22');
+  await ui.flush();
+  assert.equal(ui.run('dirty'), false);
+  assert.equal(ui.run('storageMessage'), '');
+  assert.equal(ui.events.sent.length, 1);
+});
+
+for (const message of [
+  '× 保存に失敗しました：disk full',
+  '× 保存に失敗しました：stale revision',
+  '△ 設定ファイルが破損していたため退避しました',
+  '△ 未保存の変更があります △ 旧設定の有無を確認できませんでした：read failed',
+]) {
+  test(`App keeps other storage messages when edits revert: ${message}`, async () => {
+    const ui = app();
+    await ui.load();
+    const saved = { ...get(ui.settings) };
+    ui.settings.update(value => ({ ...value, btm_str: '編集中' }));
+    ui.run(`storageMessage = ${JSON.stringify(message)}`);
+    await ui.flush();
+    assert.equal(ui.run('dirty'), true);
+    assert.equal(ui.run('storageMessage'), message);
+    ui.settings.set(saved);
+    await ui.flush();
+    assert.equal(ui.run('dirty'), false);
+    assert.equal(ui.run('storageMessage'), message);
+  });
+}
 
 test('App save guards invalid input and preserves edits on failure', async () => {
   const pending = deferred();

@@ -33,6 +33,7 @@
   let dirty = false;
   $: dirty = savedSnapshot !== null && (!!dateState.error
     || JSON.stringify(settingsSnapshot($settings, dateState)) !== savedSnapshot);
+  $: if (!dirty && storageMessage === '△ 未保存の変更があります') storageMessage = '';
   let fontsReady = false;
   let fontMessage = '';
 
