@@ -7,6 +7,7 @@
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import toast, { Toaster } from 'svelte-french-toast';
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
+  import { saveSettings } from './save.js';
 
   let dateState = todayState();
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
@@ -21,14 +22,8 @@
   const save = async () => {
     if (loading || dateState.error) return;
     refreshToday();
-    const config: Setting = {
-      ...$settings,
-      date_mode: dateState.mode,
-      manual_date: dateState.mode === 'manual' ? dateState.date : null,
-    };
     try {
-      await invoke("save", { config });
-      $settings = config;
+      await saveSettings(settings, dateState, config => invoke("save", { config }));
       toast.success("保存しました", { position: "top-center" });
     } catch (error) {
       toast.error(`保存に失敗しました：${String(error)}`, { position: "top-center" });
