@@ -1,6 +1,10 @@
 # 電子印
 
-個人的に練習用で作成
+画像の日付印を作る無料の MIT アプリ。初回の Microsoft Store 公開対象は Windows 11 / x64 / 日本語で、広告・アプリ内課金・試用期限は設けない。
+
+公開条件・機能範囲・識別情報と未確定事項は [公開方針](docs/store/estamp-release-policy.md) を参照。発行元表示名は **Banto Works（暫定）**。本体は [MIT License](LICENSE)、著作権表記は `Copyright (c) 2026 Banto Works`（暫定）とする。依存ライブラリと書体のライセンスは別に扱う。
+
+起動時に印影だけを表示する小さなウィンドウは意図した仕様で、設定は基本的に初回だけ行う。現在のウィンドウ寸法は維持する。UI 書体は BIZ UDPゴシック（BIZ UDPGothic）、印影書体はしっぽり明朝 B1（Shippori Mincho B1）に決定し、書体の同梱・実装は PR-03 で行う。
 
 ## 開発環境
 
