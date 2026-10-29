@@ -1,6 +1,6 @@
 # estamp 初回公開方針・識別情報（PR-00）
 
-決定日: 2026-10-29（JST）、著作権者・権利表記の確定: 2026-10-30 00:06 JST。ユーザー指定の確定仕様に基づく。著作権者 Banto Works と権利表記は確定、発行元表示名は暫定、Store 割当値は未取得として区別する。
+決定日: 2026-10-29（JST）、著作権者・権利表記の確定: 2026-10-30 00:06 JST。ユーザー指定の確定仕様に基づく。著作権者 Banto Works と権利表記、発行元表示名 Banto Works は確定。Store の Identity Name / Publisher / PublisherDisplayName は取得済み（取得日 2026-10-30 00:51 JST、ユーザー共有）。Store ID・PFN は未取得として区別する。
 
 ## 実装基準と範囲
 
@@ -32,7 +32,7 @@ PR-00 は公開方針、LICENSE、Cargo / package / Tauri の製品メタデー�
 | --- | --- |
 | 製品名 | `estamp`（既存のウィンドウタイトル `電子印` は維持） |
 | Tauri identifier | **`jp.tyaro.estamp`（確定）**。PR-01 で設定済み |
-| 発行元表示名 | **Banto Works（暫定）**。Tauri の `bundle.publisher` に設定 |
+| 発行元表示名 | **Banto Works（確定）**。Tauri の `bundle.publisher` に設定 |
 | 本体ライセンス | **MIT**。ルートの `LICENSE` を原本とし、package / Cargo / Tauri の license を一致させる |
 | 著作権者・著作権表記 | 著作権者 **Banto Works**、**`Copyright (c) 2026 Banto Works`（確定）**。2026-10-30 00:06 JST のユーザー決定による |
 | 開発版番号 | **`0.0.1`**。既存 Tauri 設定に package / Cargo / Cargo.lock の本体を合わせる。初回 Store 提出版番号の確定・MSIX 4桁への反映工程は PR-07 |
@@ -41,28 +41,28 @@ PR-00 は公開方針、LICENSE、Cargo / package / Tauri の製品メタデー�
 
 MIT 本文はリポジトリ直下に置く。Tauri は `bundle.licenseFile` で `../LICENSE` を指定し、同じファイルを `bundle.resources` で配布資源 `LICENSE` として含める。PR-07 の MSIX staging にもこの原本を収集し、PR-08 で最終配布物に本文と著作権表示があることを検証する。アプリ内でのライセンス表示は PR-06。依存ライブラリや書体の著作権・ライセンスは本体の MIT に置き換えず、書体は PR-03 で OFL 原文と対応する著作権表示を別途収集・同梱する。
 
-`bundle.licenseFile` により Windows の EXE（NSIS）／MSI（WiX）インストーラーに使用許諾の同意画面が追加される可能性がある。Windows の bundle ありビルド・導入は未検証で、既存 CI の `--no-bundle` では確認できない。Store 外向け EXE／MSI は、発行元表示名を確定し、同意画面・発行元表示・更新挙動を Windows で確認するまで配布しない。
+`bundle.licenseFile` により Windows の EXE（NSIS）／MSI（WiX）インストーラーに使用許諾の同意画面が追加される可能性がある。Windows の bundle ありビルド・導入は未検証で、既存 CI の `--no-bundle` では確認できない。Store 外向け EXE／MSI は、確定した発行元表示名 Banto Works の表示と、同意画面・更新挙動を Windows で確認するまで配布しない。
 
-## Store 識別情報：暫定・転記待ち
+## Store 識別情報：取得済み（manifest 反映は PR-07）
 
-Partner Center のアカウント確認・アプリ名予約・Product identity 取得はユーザー作業であり、本作業では実施していない。以下は**未確定の文書用プレースホルダ**で、manifest やビルド設定に使用できる値ではない。
+Partner Center の対象製品 estamp の Product identity は、**取得日 2026-10-30 00:51 JST、ユーザー共有**。以下の Identity Name / Publisher / PublisherDisplayName は取得済みで、発行元表示名 Banto Works は確定。本作業は文書への記録のみで、Partner Center の操作や manifest・ビルド設定への反映は行っていない。Store ID・PFN は未取得のためプレースホルダを残す。
 
-| 転記先の項目 | 暫定プレースホルダ | 正式値の取得元 |
+| 転記先の項目 | 正式値・状態 | 正式値の取得元 |
 | --- | --- | --- |
-| MSIX `Identity Name` | `<PARTNER_CENTER_PACKAGE_IDENTITY_NAME>` | 対象製品の Product identity にある Package/Identity/Name |
-| MSIX `Identity Publisher` | `<PARTNER_CENTER_PACKAGE_IDENTITY_PUBLISHER>` | 同じ画面の Package/Identity/Publisher（`CN=...` を含む文字列全体） |
-| Store の発行元表示名 | `<PARTNER_CENTER_PUBLISHER_DISPLAY_NAME>` | 同じ画面の Package/Properties/PublisherDisplayName。希望表示名 Banto Works との一致を本人が確認 |
-| Store ID | `<PARTNER_CENTER_STORE_ID>` | 同じ製品に割り当てられた Store ID |
-| Package Family Name（PFN） | `<PARTNER_CENTER_PACKAGE_FAMILY_NAME>` | 同じ製品の Package family name |
+| MSIX `Identity Name` | `BantoWorks.estamp` | 対象製品の Product identity にある Package/Identity/Name |
+| MSIX `Identity Publisher` | `CN=693ED4F8-A2A3-4AAE-8CCD-20F290A93133` | 同じ画面の Package/Identity/Publisher（`CN=...` を含む文字列全体） |
+| Store の発行元表示名 | `Banto Works`（確定） | 同じ画面の Package/Properties/PublisherDisplayName（ユーザー共有） |
+| Store ID | `<PARTNER_CENTER_STORE_ID>`（未取得） | 同じ製品に割り当てられた Store ID |
+| Package Family Name（PFN） | `<PARTNER_CENTER_PACKAGE_FAMILY_NAME>`（未取得） | 同じ製品の Package family name |
 
 転記手順:
 
 1. 本人が Partner Center の対象アカウント・発行元を確認し、estamp のアプリ名を予約する。希望名の利用可否・予約完了を記録する。
-2. 予約した製品の Product identity から上表の各値をそのまま転記する。取得日、対象製品、確認者を添える。アカウントの秘密情報や証明書秘密鍵は記録しない。
-3. この文書のプレースホルダを正式値へ置き換え、状態を「取得済み」に更新する。発行元表示名に差があれば、Banto Works の暫定表記と整合するよう本人が判断し文書・メタデータへ反映する。
+2. Identity Name / Publisher / PublisherDisplayName は、2026-10-30 00:51 JST のユーザー共有に基づき上表へ転記済み。アカウントの秘密情報や証明書秘密鍵は記録しない。
+3. 未取得の Store ID・PFN は、同じ製品の正式値が共有されたらプレースホルダを置き換え、取得日・対象製品・確認者を添えて「取得済み」に更新する。
 4. PR-07 で正式 manifest の `Identity Name` / `Publisher` 等へ転記し、同じ製品の値であることを照合する。正式 MSIX の受け入れ前に未取得値をすべて解消する。
 
-**`CN=Banto Works` などを推測で作らない。** Tauri identifier、発行元表示名、MSIX Identity、Store ID、PFN を流用・相互変換しない。Tauri の `bundle.publisher` は MSIX `Identity Publisher` の設定ではない。MSIX の生成・署名や Partner Center の操作は PR-00 の実装には含めない。
+**`CN=Banto Works` などを推測で作らない。** Tauri identifier **`jp.tyaro.estamp` は変更せず**、MSIX Identity とは別の値として扱う。Tauri identifier、発行元表示名、MSIX Identity、Store ID、PFN を流用・相互変換しない。Tauri の `bundle.publisher` は MSIX `Identity Publisher` の設定ではない。MSIX の生成・署名や Partner Center の操作は PR-00 の実装には含めない。
 
 ## 書体と起動ウィンドウの意図
 
@@ -75,17 +75,17 @@ Partner Center のアカウント確認・アプリ名予約・Product identity 
 
 | 担当 | 渡す内容と期限 |
 | --- | --- |
-| 本人・セキュリティ／リリース | 発行元表示名 Banto Works の最終確認、アカウント確認・名前予約・上表の転記。正式 identity は PR-07 の正式 MSIX 受け入れ前まで |
+| 本人・セキュリティ／リリース | 発行元表示名 Banto Works は確定、Identity Name / Publisher / PublisherDisplayName は取得・文書転記済み。アカウント確認・名前予約の記録と未取得の Store ID・PFN の共有は残作業。manifest への転記・照合は PR-07 |
 | 企画 | この初回範囲・無料方針を掲載文とプライバシー骨子へ反映。公開 URL・サポート連絡先・最終原稿は PR-09 まで |
 | デザイン | 両書体の必要ウエイトとライセンス資料を PR-03 前、アイコン原本・小さな通常画面を前提にした画面仕様を PR-06 前まで |
 | 品質 | Windows 11 x64 端末を確保し、PR-07 試作時に OS ビルド・WebView2 等を記録。PR-08 で最終品質確認 |
 | 開発 | PR-02 に既存設定 schema、PR-03 に両書体の選定、PR-04 にデザインの日付仕様、PR-07 に MIT 原本・正式 identity を渡す |
 
-### ユーザー・担当部門の作業（未実施）
+### ユーザー・担当部門の作業（実施状況）
 
-1. **発行元表示名の最終確認:** 暫定の発行元表示名 Banto Works（`bundle.publisher` / `PublisherDisplayName`）を本人が確認する。
+1. **発行元表示名（確定）:** Banto Works（`bundle.publisher` / `PublisherDisplayName`）は、2026-10-30 00:51 JST のユーザー共有により確定。
 2. **Partner Center アカウント確認・名前予約:** 本人が対象アカウント・発行元を確認し、estamp の名前の利用可否・予約完了を記録する。
-3. **Product identity の転記:** 本文の表と手順に従い、取得日・対象製品・確認者を添えて正式値を記録する。PR-07 の正式 MSIX 受け入れ前にプレースホルダを解消する。
+3. **Product identity の文書転記（3項目取得済み）:** Identity Name / Publisher / PublisherDisplayName は、取得日 2026-10-30 00:51 JST、対象製品 estamp、ユーザー共有として上表に記録済み。未取得の Store ID・PFN の共有と正式 manifest への転記・照合は PR-07 の正式 MSIX 受け入れ前までに行う。
 4. **既存配布物の情報提供（存在する場合）:** 旧ポータブル版などの所在・入手経路・利用者環境の設定実物と保存場所を提供する。開発用サンプルだけで旧版互換を確認済みとせず、追加対応は別途判断する。
 5. **部門への手配:** 企画へ無料方針・初回機能と掲載／プライバシー骨子、デザインへ PR-03 前の書体ウエイト／ライセンス資料と PR-06 前の画面・アイコン、品質へ Windows 11 x64 端末確保を依頼する。本作業では依頼メッセージの送信・外部アカウント操作を行っていない。
 

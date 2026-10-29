@@ -1,10 +1,10 @@
 # estamp の Microsoft Store 無料公開に向けた作業計画
 
-作成日: 2026-10-22（JST）／発行元表示名: **Banto Works（暫定）**
+作成日: 2026-10-22（JST）／発行元表示名: **Banto Works（確定）**
 
-2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。開発手順と検証範囲は [開発・検証手順](../development.md) を参照。
+2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity Name / Publisher の Store 割当値は取得済み（2026-10-30 00:51 JST、ユーザー共有）。正式値は [公開方針](estamp-release-policy.md#store-識別情報取得済みmanifest-反映は-pr-07) を参照し、正式 manifest への反映は PR-07 で行う。開発手順と検証範囲は [開発・検証手順](../development.md) を参照。
 
-2026-10-29 PR-00 決定追記（権利表記は 2026-10-30 00:06 JST のユーザー決定で確定）: 今回の実装基準は PR-01 マージ済みの **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**、作業ブランチは `feat/pr-00-release-identity`。公開条件・確定した権利表記・暫定の発行元表示名・Store 値のプレースホルダと転記手順は [公開方針](estamp-release-policy.md) を正とする。本体 MIT、著作権者 Banto Works、`Copyright (c) 2026 Banto Works` は確定。書体は UI＝BIZ UDPゴシック、印影＝しっぽり明朝 B1 に決定（実装は PR-03）。小さな印影だけの起動画面は意図した仕様として維持する。日付の直接入力等は既に確定した [デザイン仕様](../design/estamp-design-rules.md) が本計画の旧記述より優先し、実装は PR-04 のままとする。
+2026-10-29 PR-00 決定追記（権利表記は 2026-10-30 00:06 JST のユーザー決定で確定）: 今回の実装基準は PR-01 マージ済みの **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**、作業ブランチは `feat/pr-00-release-identity`。公開条件・確定した権利表記・確定した発行元表示名・取得済みの Store identity と未取得項目の転記手順は [公開方針](estamp-release-policy.md) を正とする。本体 MIT、著作権者 Banto Works、`Copyright (c) 2026 Banto Works` は確定。書体は UI＝BIZ UDPゴシック、印影＝しっぽり明朝 B1 に決定（実装は PR-03）。小さな印影だけの起動画面は意図した仕様として維持する。日付の直接入力等は既に確定した [デザイン仕様](../design/estamp-design-rules.md) が本計画の旧記述より優先し、実装は PR-04 のままとする。
 
 作成時の対象: 本 estamp リポジトリ、当時確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
 前提資料: [企画部評価](estamp-store-eval.md)。計画作成時はソース、設定、依存関係、Git を読み取っただけで、コード変更、依存取得、ビルド、Store 登録・提出は行っていない。以下の PR 名・構成・人日は実施案であり、人日はすべて見積もり。
@@ -45,7 +45,7 @@
 | --- | --- | --- |
 | 実装基準 | 決定済み: PR-01 マージ後の `8bc6ea9` を基準とする。既存設定・画面等との差は公開方針に記録。別配布版の所在は未確認 | 開発・企画／PR-00 記録済み |
 | 製品の位置付け | 決定済み: 画像の日付印を作る無料 MIT アプリ。広告・アプリ内課金・試用期限なし。本人確認・電子署名・改ざん防止の機能はうたわない | 企画／PR-00 決定済み |
-| 発行元と識別情報 | 発行元表示名 Banto Works は暫定、本体 MIT。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は確定。Tauri identifier は `jp.tyaro.estamp` に確定。MSIX Identity Name／Publisher は未取得で、公開方針のプレースホルダと転記手順で管理 | セキュリティ・リリース／PR-00 記録済み、Store 正式値は PR-07 正式 MSIX 受け入れ前 |
+| 発行元と識別情報 | 発行元表示名 Banto Works は確定、本体 MIT。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は確定。Tauri identifier は `jp.tyaro.estamp` に確定。MSIX Identity Name は `BantoWorks.estamp`、Publisher は `CN=693ED4F8-A2A3-4AAE-8CCD-20F290A93133` として取得済み（2026-10-30 00:51 JST、ユーザー共有）。詳細は公開方針を参照 | セキュリティ・リリース／文書記録済み、正式 manifest への反映・照合は PR-07 |
 | 公開する環境 | 決定済み: 初回は Windows 11 x64、日本語。最低 OS ビルドは PR-07・08 で検証し確定。Windows 10・ARM64・英語・S モードは今回対応を保証しない | 企画・品質／PR-00 決定済み |
 | 設定と旧版互換 | PR-00 で開発用 `src-tauri/Setting.json` を schema の参照用サンプルとして確認。利用者環境の実物・実際の保存場所は未確認。PR-02 で `app_config_dir()` と実行ファイル隣からの明示的インポートを実装。保存後も確認付きで取込可能・旧ファイル保持・CWD 自動走査なし。別配布版との自動移行は約束しない | 基準確認は PR-00 記録済み、実装は開発／PR-02 |
 | ポータブル版 | 決定済み: 初回の新規成果物には含めない。既存配布物の所在・入手経路は未確認で本人からの情報待ち。判明したら旧版として案内し、追加対応は別 PR | 開発・企画／PR-00 決定済み |
@@ -73,12 +73,12 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 ### PR-00：公開条件・識別情報・MIT の確定（0.5 人日）
 
 - **目的:** 作業の基準と各部門への依頼内容を固定する。
-- **変更範囲:** 公開方針文書、LICENSE、Cargo／package／Tauri の製品メタデータ。企画部と初回機能を合意し、本体 MIT を明記する。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は 2026-10-30 00:06 JST のユーザー決定で確定。発行元表示名の確認は引き続き必要とする。
-- **依存関係:** なし。外部作業としてアカウント確認・アプリ名予約・Product identity の取得をセキュリティ・リリース部に依頼。
+- **変更範囲:** 公開方針文書、LICENSE、Cargo／package／Tauri の製品メタデータ。企画部と初回機能を合意し、本体 MIT を明記する。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は 2026-10-30 00:06 JST のユーザー決定で確定。発行元表示名 Banto Works は 2026-10-30 00:51 JST のユーザー共有により確定。
+- **依存関係:** なし。Product identity の3項目は取得済み。アカウント確認・アプリ名予約の記録と未取得の Store ID・PFN の共有はセキュリティ・リリース部の残作業。
 - **担当:** 開発、企画、セキュリティ・リリース。
 - **受け入れ条件:** 対象コミット、無料・課金なし・MIT、対応 OS、機能範囲、正式 identifier、発行元表示名と Store 割当値を記録。Store 割当待ちなら未確定値を明示し、正式 MSIX の受け入れ前に解消する。MIT 本文をリポジトリと配布物へ含める方針が決まる。
 
-2026-10-29 実施記録（権利表記の状態を 2026-10-30 更新）: [公開方針](estamp-release-policy.md)・ルート `LICENSE`・製品メタデータに反映。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は 2026-10-30 00:06 JST のユーザー決定で確定。発行元表示名 Banto Works は引き続き暫定とし、本人の最終確認を残す。開発版は既存 Tauri に合わせ `0.0.1` に統一。MIT 原本を Tauri 配布資源とし、MSIX staging への収集は PR-07、最終配布物の確認は PR-08。Store 割当値は未取得のまま明示し、アカウント確認・名前予約・転記は [公開方針のユーザー作業一覧](estamp-release-policy.md#ユーザー担当部門の作業未実施) に引き継ぐ。初回実装時の検証要約も同文書に記録する。
+2026-10-29 実施記録（権利表記・識別情報の状態を 2026-10-30 更新）: [公開方針](estamp-release-policy.md)・ルート `LICENSE`・製品メタデータに反映。著作権者 Banto Works と `Copyright (c) 2026 Banto Works` は 2026-10-30 00:06 JST のユーザー決定で確定。発行元表示名 Banto Works は 2026-10-30 00:51 JST のユーザー共有により確定。開発版は既存 Tauri に合わせ `0.0.1` に統一。MIT 原本を Tauri 配布資源とし、MSIX staging への収集は PR-07、最終配布物の確認は PR-08。MSIX Identity Name / Publisher / PublisherDisplayName は取得・文書転記済みで、正式 manifest への反映は PR-07。アカウント確認・名前予約の記録と未取得の Store ID・PFN は [公開方針のユーザー作業一覧](estamp-release-policy.md#ユーザー担当部門の作業実施状況) に引き継ぐ。初回実装時の検証要約も同文書に記録する。
 
 ### PR-01：Tauri v2 と Windows 開発基盤への移行（1〜2 人日）
 
@@ -163,7 +163,7 @@ Tauri の独自登録コマンドには既定で全ウィンドウから呼べ�
 
 Tauri の標準 bundler が出す EXE／MSI と、今回の MSIX 提出経路を混同しない。Microsoft は Tauri の実行ファイルを winapp CLI で MSIX 化する手順を公開している。CLI の版を固定し、その版の `pack`／`package` 等の実コマンドとオプションを PR に記録する。Store 提出前の CA 証明書購入は前提にせず、Store 側の MSIX 署名とローカル検証の開発署名を分ける。[Microsoft: Tauri と winapp CLI](https://learn.microsoft.com/en-us/windows/apps/dev-tools/winapp-cli/guides/tauri)
 
-発行元表示名 **Banto Works（暫定）**、Tauri identifier、MSIX Identity Name、Identity Publisher（例: Store 割当の `CN=...`）、Store ID、PFN はそれぞれ別の値として管理する。Publisher に表示名を推測で入れない。[Microsoft: Product identity](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
+発行元表示名 **Banto Works（確定）**、Tauri identifier、MSIX Identity Name、Identity Publisher（例: Store 割当の `CN=...`）、Store ID、PFN はそれぞれ別の値として管理する。Publisher に表示名を推測で入れない。[Microsoft: Product identity](https://learn.microsoft.com/en-us/windows/apps/publish/view-app-identity-details)
 
 通常の Tauri Win32 プロセスを full trust で包装するなら、manifest の **`runFullTrust` は restricted capability** として扱い、必要理由を提出情報へ書く。これは管理者昇格とは別である。評価資料の「restricted capability も不要」は、この MSIX 構成では修正する。[Microsoft: desktop MSIX manifest](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)
 
@@ -232,7 +232,7 @@ PR-02 では保存フィールドだけを準備し、印影種類の追加・�
 
 | 順序 | 開発側 | 同時に進める他部門作業 | 次へ渡す条件 |
 | --- | --- | --- | --- |
-| 1 | PR-00。`8bc6ea9`・初回範囲・`jp.tyaro.estamp`・デザインの日付仕様を公開方針で固定。MIT／確定した権利表記、両書体、小さな起動画面の意図を記録 | 本人・リリース部: 暫定の発行元表示名の最終確認、アカウント確認・名前予約・identity 転記（未実施）。企画: 掲載・プライバシー骨子。デザイン: アイコン・画面案。品質: Windows 端末確保 | 基準・受渡し期限は公開方針に記録済み。Store 値は PR-07 の正式 MSIX 受け入れ前に解消 |
+| 1 | PR-00。`8bc6ea9`・初回範囲・`jp.tyaro.estamp`・デザインの日付仕様を公開方針で固定。MIT／確定した権利表記、両書体、小さな起動画面の意図を記録 | 本人・リリース部: 発行元表示名 Banto Works は確定、identity の3項目は取得・文書転記済み。アカウント確認・名前予約の記録と Store ID・PFN の共有は残作業。企画: 掲載・プライバシー骨子。デザイン: アイコン・画面案。品質: Windows 端末確保 | 基準・取得済み値・受渡し期限は公開方針に記録済み。正式 manifest への反映・未取得項目の解消は PR-07 の正式 MSIX 受け入れ前 |
 | 2 | PR-01。直後に PR-07 の最小 MSIX 試作 | 品質・リリース: 起動、WebView2、runFullTrust、初回 WACK の確認 | Store 経路に進める見込みを早期判断 |
 | 3 | PR-02・03。設定 schema と書体を固定 | デザイン: 実書体で文字の収まりを確認。リリース: OFL と保存先・移行方法を確認 | 保存・書体の契約が揃う |
 | 4 | PR-04 → PR-05 | 品質: 日付境界・実際の貼り付け先を随時確認 | 無料版の全基本操作が動く |
