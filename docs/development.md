@@ -1,24 +1,61 @@
-# 開発と検証
+# 開発・検証手順
 
-## 固定依存と検証範囲
+実装の基準は本リポジトリ。Tauri identifier は `jp.tyaro.estamp`。MSIX Identity / Publisher は PR-07 で別途確定する。
+個人の作業メモ・検証ログはバージョン管理せず、継続して必要な仕様・手順・検証範囲は docs に記録する。
 
-Tauri Rust 2.12.2 / tauri-build 2.7.1、JS API・CLI 2.12.4、clipboard-manager Rust・JS 2.3.0、Windows の clipboard-win 5.4.3 を使用する。直接依存は完全一致、推移依存は lock に固定する。Rust の指定版は1.95.0、Node は24.22.1、Yarn Classic は1.22.22。identifier は `jp.tyaro.estamp`。MSIX Identity / Publisher は PR-07 で別途確定する。
+## ローカルの検証
 
-2026-10-29 の Mac ARM64 環境は stable Rust / Cargo 1.99.1、Node 24.22.1、Yarn 1.22.22。PR-01 で型検査・オフライン Rust check / test・Tauri release build（bundle なし）が成功した。Rust 1.95.0、Windows、GUI / OS clipboard の成功を意味しない。PR-02 の検証と受入項目は [設定ストアの仕様](settings-storage.md) を参照。
+依存導入済みのリポジトリルートで以下を1つずつ実行する。Cargo は `-j 2` とし、ネットワークなしの場合は Corepack の取得も止める。
 
-[Windows CI](../.github/workflows/windows.yml) は Rust 1.95.0 / Node 24 / Yarn 1.22.22 で復元・型検査・Rust check / test・Tauri release build を順に実行する。CI の実行結果と GUI・画像貼付・インストーラーの確認は別途取得する。
+```sh
+export COREPACK_ENABLE_NETWORK=0
+corepack yarn run check
+cargo check -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml
+cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml
+corepack yarn build
+```
+
+`check` は Svelte / TypeScript の診断に続き、日付、保存、App のハンドラーの回帰テストを実行する。追加のテスト依存は使わない。
+App テストは実ファイルの TypeScript スクリプトを実行し、DOM 更新・Canvas・Tauri IPC をテスト用の境界に置き換える。実際の Svelte DOM 描画、WebView2、OS クリップボードの確認は実機で行う。
+
+PR-01 時点では Mac の stable Rust 1.99.1 で型検証・Rust check / test・bundle なしの Tauri release build が成功した。固定版 Rust 1.95.0、Windows CI と GUI / 画像貼付けの結果は未取得。既存の Yarn キャッシュ警告と Browserslist データの古さの通知は残る。
+[Windows CI](../.github/workflows/windows.yml) は Rust 1.95.0 / Node 24 / Yarn 1.22.22 で check・Rust test・release build を順に実行する。GUI・画像貼付け・インストーラーの確認は含まない。
+
+## 固定依存
+
+Tauri Rust 2.12.2 / tauri-build 2.7.1、JS API・CLI 2.12.4、clipboard-manager Rust・JS 2.3.0、Windows の clipboard-win 5.4.3 を使用する。直接依存は完全一致、推移依存は lock に固定する。Rust の指定版は1.95.0、Node は24.22.1、Yarn Classic は1.22.22。
 
 ## Mac の起動
 
-リポジトリ直下で、固定依存を復元した環境から実行する。ビルド・テストは1つずつ、Cargo は `-j 2` とする。
+固定依存を復元したリポジトリ直下で実行する。ビルド・テストは1つずつ、Cargo は `-j 2` とする。
 
 ```sh
 node node_modules/@tauri-apps/cli/tauri.js dev -- --locked --offline -j 2
 ```
 
-CLI を Node で直接呼び、Yarn による `--` の除去を避ける。オフラインで依存が不足した場合は停止し、別途必要な取得を行う。開発時の旧設定取込は実行バイナリ隣のみを対象とする。
+CLI を Node で直接呼び、Yarn による `--` の除去を避ける。オフラインで依存が不足した場合は停止し、別途必要な取得を行う。Rust toolchain は `rustc --version` で確認し、共有環境の toolchain は変更しない。
 
-## 環境
+PR-02 統合後の保存先は CWD に依存しない `app_config_dir()/Setting.json`。GUI の保存・取込確認では既存の設定を先に保護する。旧設定取込は実行バイナリ隣のみを対象とし、開発用の追跡済み `src-tauri/Setting.json` を自動で読まない。保存先・旧ファイルの配置・受入項目は [設定ストアの仕様](settings-storage.md) を参照。
+
+## PR-04 の日付・保存・コピー
+
+日付は時刻なしの `YYYY-MM-DD` で保持し、今日の取得だけローカル年月日の getter を使う。明治6年（1873-01-01）以降の M/T/S/H/R・漢字元号・元年、西暦の年月日を受け付ける。NFKC 正規化後に前後の空白を trim するため、全角空白も利用できる。元号の期間外は補正せず、正しい表記を案内する。受付仕様は [デザイン仕様 §3](design/estamp-design-rules.md) を参照。
+
+自動モードはタイマー・focus・visibilitychange・保存／コピーの直前に今日を確認する。正常な手入力は手動モードとなり、「今日に戻す」で自動へ戻る。不正入力中は入力と最後の正常な印影を保持し、保存・コピーを止める。
+日付の保存契約は `date_mode`（既定 `auto`）、`date_format`（既定 `gregorian`）、`manual_date`（既定 `null`）。PR-02 の schema・印影種類・未知フィールドと同じ設定構造体に保持する。読込と旧設定取込は共通の `applyLoaded` で `LoadedSettings.settings` を適用し、手動日付を共通の検証器で復元する。
+
+保存 IPC には未知フィールドを含む開始時のスナップショットと revision を `{ config, revision }` で渡し、成功応答では revision だけを更新する。編集中のストアへ古い値を書き戻さない。画像生成中も編集を受け付ける。コピー直前に再び今日と DOM を更新し、開始時の SVG・出力サイズとの不一致や入力エラーがあれば画像を破棄し、中止して再操作を案内する。コピーの二重実行も抑止する。
+
+回帰テストでは改元境界・閏日・入力形式・空白・東京／ロサンゼルスの日付、保存中の編集保持、App の保存後の書き戻し防止、render / Image.new 待機中の日付・表示形式・入力エラー・日跨ぎ・出力サイズの変更を扱う。Rust の旧形式設定はテスト内の JSON で用意し、往復テストは一時ディレクトリを使う。
+
+2026-10-29 の PR-04 品質レビュー対応では、Mac / Node 24.22.1 / Yarn 1.22.22 / Rust 1.99.1 で上記4コマンドが成功した。Svelte 診断はエラー・警告0件、日付10件・保存3件・App13件・Rust2件が成功。旧コピー判定と保存後の書き戻しをテスト内だけで再現し、回帰テストが失敗を検出することも確認した。依存追加・lock 更新・ネットワーク取得は行っていない。
+
+実機では `Ｒ７．１０．２２` → 和暦切替 → 保存／再起動、`H31.5.1` → 訂正表示とコピー無効 → `R元.5.1` → 今日に戻す、生成中の日付変更後の再コピーを確認する。長い和暦の収まり・WebView2・画像貼付けは未検証。ウィンドウサイズ・保存先・依存と lock は PR-04 では変更しない。
+保存先・書込み失敗・初回の既定値読込・旧設定取込は PR-02 の保存基盤へ統合した。書体同梱は PR-03、画像品質と貼付先別判定は PR-05、CSP は PR-06 に残る。
+
+2026-10-30 の PR-02 統合検証では、同じ Mac ARM64 / Node 24.22.1 / Yarn 1.22.22 / Rust 1.99.1 で `yarn run check`（診断エラー・警告0件、日付10件・保存4件・App23件）、`cargo check -j 2 --locked --offline`、`cargo test -j 2 --locked --offline`（22件）、`yarn build` がすべて成功した。JS テストは `check` 内で実行した。ネットワークを無効にし、各コマンドを直列に実行した。Rust テスト時に Xcode の SDK 探索・キャッシュ関連の環境警告が出たが、テスト失敗はなかった。固定版 Rust・Windows・GUI の未確認範囲は上記と同じ。
+
+## Windows の確認環境
 
 - Windows 11 x64、通常ユーザーで確認する。
 - Visual Studio 2022 Build Tools の「C++ によるデスクトップ開発」、MSVC x64、Windows SDK を導入する。
@@ -26,7 +63,7 @@ CLI を Node で直接呼び、Yarn による `--` の除去を避ける。オ�
 - Node `24.22.1`、Yarn Classic `1.22.22`、Rust `1.95.0` の MSVC x64 toolchain を用意する。`.nvmrc` / `packageManager` / `rust-toolchain.toml` と一致させる。
 - 以下の例ではリポジトリを `C:\work\estamp` に配置する。PowerShell で実行する。途中のコマンドが非ゼロで終了したら、後続を実行せずログを確認する。Cargo は `-j 2`、ビルド・テストは1つずつ実行する。
 
-## lock による依存復元・ビルド
+## Windows の依存復元・ビルド
 
 作業ディレクトリ: `C:\work\estamp`。
 
@@ -52,7 +89,7 @@ git diff --exit-code -- yarn.lock src-tauri/Cargo.lock
 Yarn Classic の `yarn check` は組込みコマンドのため、型検証には `yarn run check` を使用する。
 release build は Yarn による `--` の除去を避けるため、インストール済み CLI を Node で直接呼ぶ。`beforeBuildCommand` が Vite 本番 build を実行する。CLI 2.12.4 で `STATIC_VCRUNTIME` 非推奨警告の有無も記録する。Mac では指定 PATH の stable Rust 1.99.1 で検証したため、固定版 1.95.0 での結果も記録する。Settings の round-trip テストは一時ディレクトリを使い、追跡済み `Setting.json` と CWD を変更しない。
 
-## 実行確認
+## Windows の実行確認
 
 作業ディレクトリ: `C:\work\estamp`。
 
@@ -78,4 +115,4 @@ Get-FileHash .\src-tauri\target\x86_64-pc-windows-msvc\release\estamp.exe -Algor
 
 ## 保存する証跡
 
-対象コミット、Windows の版／ビルド、CPU、MSVC／SDK／WebView2／Rust／Node／Yarn の版、コマンドの終了コードとログ、起動スクリーンショット、release EXE の SHA-256、未解決の問題を残す。Windows Rust check / release build / 起動確認は未実施。
+対象コミット、Windows の版／ビルド、CPU、MSVC／SDK／WebView2／Rust／Node／Yarn の版、コマンドの終了コードとログ、起動スクリーンショット、release EXE の SHA-256、未解決の問題を残す。この Mac では Windows Rust check / release build / 起動確認は未実施。

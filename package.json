@@ -1,14 +1,19 @@
 {
   "name": "estamp",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
+  "description": "画像の日付印を作るアプリ",
+  "license": "MIT",
   "type": "module",
   "packageManager": "yarn@1.22.22",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-check --tsconfig ./tsconfig.json && yarn run test:date && yarn run test:save && yarn run test:app",
+    "test:date": "node --test tests/date.test.js",
+    "test:save": "node --test tests/save.test.js",
+    "test:app": "node --test tests/app.test.js",
     "tauri": "tauri"
   },
   "dependencies": {

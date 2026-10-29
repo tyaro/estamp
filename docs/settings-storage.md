@@ -1,6 +1,6 @@
 # PR-02 設定ストアの仕様
 
-PR #6 / `feat/pr-02-settings-storage` の単体仕様（2026-10-30 レビュー対応）。印影種類は保存フィールドのみ。日付の動作・入力・表示は PR-04 で接続する。小さな起動ウィンドウの寸法は維持する。
+PR #6 / `feat/pr-02-settings-storage` の統合仕様（2026-10-30）。PR-00 / #4 の公開条件と PR-04 / #5 の日付処理を統合した。印影種類は保存フィールドのみ。小さな起動ウィンドウの寸法は維持する。
 
 ## 保存と IPC
 
@@ -48,18 +48,18 @@ schema version は1。欠損項目には次の既定値を補い、指定され�
 
 取り込み元は、レビューの表示案に合わせて **現在起動している実行ファイルと同じフォルダーの `Setting.json`** に固定する。存在確認と取込で同じ `legacy_path()` を使う。旧版は CWD 相対に保存していたため、ショートカットの作業フォルダーや開発用 `src-tauri/Setting.json` がそのまま対象になるとは限らない。別の場所にある場合は旧アプリを終了し、元ファイルを残したまま、対象ファイルを現在の実行ファイル隣へコピーして「再読込」する。開発時の例は `src-tauri/target/debug/Setting.json`（target を指定した場合は該当の出力先）。コピー先に既存ファイルがあれば、その内容を先に確認する。実行ファイル隣へ配置できないインストール環境や任意パス選択 UI は後続課題とする。
 
-## 検証と段階Bへの申し送り
+## PR-04 との統合と検証
 
 Rust テストは一時ディレクトリとテスト内の旧6項目 JSON を使い、追跡済み `src-tauri/Setting.json` と CWD を変更・参照しない。旧値保持、保存後の取込、古い revision・不明 schema の上書き拒否、BOM の読込と取込、未知値の保持、短時間のロック待機と別プロセスのタイムアウト、一時ファイルの片付けを確認する。
 
-段階Aでは #4/#5 の統合・衝突解消は行わない。段階Bでは次を接続する。
+設定型は `settings.rs` に集約し、CWD 保存を使わない。フロントの `applyLoaded` は読込・旧設定取込の成功応答を受け、`LoadedSettings.settings` をストアに適用すると同時に `restoreDate` で手動日付を検証・復元する。revision・warning・ready も同じ経路で更新する。不正な保存日付はエラーを表示し、修正または「今日に戻す」まで保存・コピーを止める。
 
-- `main.rs` の設定型は `settings.rs` を正として1定義に統合し、CWD 保存を復活させない。
-- PR-04 の日付復元に `LoadedSettings.settings` を渡し、revision / warning / ready と取込後の日付復元を維持する。
-- PR-04 の保存処理へ `{ config, revision }` を渡し、成功時は revision を更新する。応答後に編集中のストアを古いスナップショットで置き換えない。未知フィールドを含む設定全体を送る。
-- busy / ready と日付エラーの条件を併合し、時計監視の後始末・日付コピー時の競合防止を維持する。スクロール領域を1つにまとめ、ウィンドウ寸法を変えない。
-- 計画書の PR-00 決定事項・PR-04 日付仕様と本仕様を併存させる。開発・検証文書への相対リンクを維持する。
+保存では未知フィールド・未知の印影種類を含む設定全体に、現在の日付状態の `date_mode` / `manual_date` を反映したスナップショットを `{ config, revision }` で送る。成功応答で revision だけを更新し、応答待ち中に変更されたストアや入力日付を古い値で置き換えない。失敗時は revision と編集内容を保持する。
 
-2026-10-30 の Mac ARM64（Rust / Cargo 1.99.1、Node 24.22.1、Yarn 1.22.22）で、`corepack yarn run check`（0 errors / 0 warnings）、`cargo check -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml`、`cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml`（22 passed）、`corepack yarn build` が成功した。各コマンドは直列に実行し、依存追加・ネットワーク取得は行っていない。
+busy / ready と日付エラーで操作を制御し、時計のタイマー・focus・visibilitychange はアンマウント時に解除する。コピーは画像生成後に日付・SVG・出力サイズの変更を再確認し、古い画像の転送を止めてリソースを解放する。スクロール領域は1つに保つ。JS 回帰テストでは revision の引継ぎ、未知値保持、読込・取込後の自動／手動／不正日付復元、取込確認・失敗、保存の重複抑止、時計監視の解除も確認する。
+
+段階Aの検証記録: 2026-10-30 の Mac ARM64（Rust / Cargo 1.99.1、Node 24.22.1、Yarn 1.22.22）で、`corepack yarn run check`（0 errors / 0 warnings）、`cargo check -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml`、`cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml`（22 passed）、`corepack yarn build` が成功した。各コマンドは直列に実行し、依存追加・ネットワーク取得は行っていない。
+
+PR-00 / PR-04 との統合後の検証結果は [開発・検証手順](development.md) を参照。
 
 Windows CI・実機での rename / OS ロック、GUI での取込確認・キャンセル、再起動・コピー、MSIX 更新保持は未確認。Mac のテスト成功だけで Windows の受入完了とはしない。

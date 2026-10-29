@@ -1,12 +1,26 @@
 <script lang="ts">
   import {Canvg} from 'canvg';
   import { settings,type LoadedSettings } from './store';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { Image } from '@tauri-apps/api/image';
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import toast, { Toaster } from 'svelte-french-toast';
+  import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
+  import { saveSettings } from './save.js';
 
+  let dateState = todayState();
+  $: str_date = formatStampDate(dateState.date, $settings.date_format);
+  // Canvas renderer and SVG both support transforms; keep the long era date inside the stamp.
+  $: dateWidth = Array.from(str_date).reduce((width, char) => width + (/[^\x00-\x7F]/.test(char) ? 1 : 0.6), 0) * $settings.mid_font_size;
+  $: dateTextScale = Math.min(1, 340 / dateWidth);
+  const refreshToday = () => { dateState = refreshDate(dateState); };
+  const inputDate = (event: Event) => {
+    dateState = editDate(dateState, (event.currentTarget as HTMLInputElement).value);
+  };
+
+  let copying = false;
+  let disposed = false;
   let busy = true;
   let ready = false;
   let revision: string | null = null;
@@ -16,17 +30,19 @@
 
   const applyLoaded = (result: LoadedSettings) => {
     $settings = result.settings;
+    dateState = restoreDate(result.settings);
     revision = result.revision;
     storageMessage = result.warning ?? '';
     ready = true;
   };
 
   const save = async () => {
-    if (busy || !ready) return;
+    if (busy || !ready || dateState.error) return;
+    refreshToday();
     busy = true;
     try {
       // Save a snapshot; do not replace edits made while IPC is pending.
-      revision = await invoke<string>("save", { config: { ...$settings }, revision });
+      revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
       storageMessage = '';
       toast.success("保存しました", { position: "top-center" });
     } catch (error) {
@@ -49,13 +65,18 @@
   const load = async () => {
     busy = true;
     try {
-      applyLoaded(await invoke<LoadedSettings>("load"));
+      const result = await invoke<LoadedSettings>("load");
+      if (disposed) return;
+      applyLoaded(result);
     } catch (error) {
+      if (disposed) return;
       ready = false;
       storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
     } finally {
-      await refreshLegacy();
-      busy = false;
+      if (!disposed) {
+        await refreshLegacy();
+        busy = false;
+      }
     }
   };
 
@@ -68,29 +89,59 @@
     } catch (error) {
       storageMessage = `× 旧設定を取り込めませんでした：${String(error)}`;
     } finally {
-      await refreshLegacy();
-      busy = false;
+      if (!disposed) {
+        await refreshLegacy();
+        busy = false;
+      }
     }
   };
 
-  onMount(() => { void load(); });
+  onMount(() => {
+    void load();
+    const timer = window.setInterval(refreshToday, 1000);
+    window.addEventListener('focus', refreshToday);
+    document.addEventListener('visibilitychange', refreshToday);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshToday);
+      document.removeEventListener('visibilitychange', refreshToday);
+    };
+  });
   const clipboardCopy = async () => {
-    if (!ready) return;
+    if (busy || !ready || copying || dateState.error) return;
+    copying = true;
     try {
+      refreshToday();
+      await tick();
+      if (dateState.error) {
+        toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
+        return;
+      }
       const src = document.querySelector<SVGSVGElement>('#stamp');
       if (!src) throw new Error('印影が見つかりません');
-      const svgText = src.outerHTML.replace(/NS[0-9]+:href/g, 'xlink:href');
+      const expectedSvg = src.outerHTML;
+      const outputSize = $settings.output_size;
+      const svgText = expectedSvg.replace(/NS[0-9]+:href/g, 'xlink:href');
       const canvas = document.createElement('canvas');
       canvas.width = src.width.baseVal.value;
       canvas.height = src.height.baseVal.value;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('画像を作成できません');
       const v = Canvg.fromString(ctx, svgText);
-      v.resize($settings.output_size, $settings.output_size, 'xMidYMid meet');
+      v.resize(outputSize, outputSize, 'xMidYMid meet');
       await v.render();
       const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const image = await Image.new(new Uint8Array(data), width, height);
       try {
+        // Rendering and Image.new both yield. Flush date/format edits before writing.
+        refreshToday();
+        await tick();
+        if (dateState.error || document.querySelector('#stamp')?.outerHTML !== expectedSvg
+          || $settings.output_size !== outputSize) {
+          toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
+          return;
+        }
         await writeImage(image);
       } finally {
         await image.close();
@@ -99,14 +150,10 @@
     } catch (error) {
       console.error('画像コピーに失敗しました', error);
       toast.error('画像コピーに失敗しました', { position: 'bottom-center' });
+    } finally {
+      copying = false;
     }
   };
-  const today = new Date()
-  let str_date:string = today.getFullYear() + "."
-              + ("00"+String(today.getMonth()+1)).slice(-2) +"."
-              + ("00"+today.getDate()).slice(-2);
-
-
 </script>
 <Toaster />
 <div class="app-viewport">
@@ -114,7 +161,7 @@
   <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} role="alert">{storageMessage}</p>
 {/if}
 <div class="main">
-  <button disabled={!ready} on:click={()=>clipboardCopy()}>
+  <button aria-label="印影をコピー" disabled={busy || !ready || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
   <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
  
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
@@ -123,7 +170,7 @@
   <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.top_font_size}   x=200 y=100 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {$settings.top_str}
   </text>
-  <text font-size={$settings.mid_font_size}  x=200 y=200 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
+  <text transform={`translate(200 200) scale(${dateTextScale} 1)`} font-size={$settings.mid_font_size}  x=0 y=0 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {str_date}
   </text>
   <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.btm_font_size} x=200 y=300 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
@@ -152,12 +199,26 @@
     </tr>
     <tr>
       <td style="width:4rem;text-align:center">
-        中
+        日付
       </td>
       <td >
-        <input class="variant-glass-primary" style="width:6rem"  bind:value={str_date}>
+        <input id="date-input" aria-label="日付（西暦・和暦）" aria-invalid={!!dateState.error}
+          aria-describedby="date-error date-confirmation" class="variant-glass-primary" style="width:6rem"
+          value={dateState.input} on:input={inputDate} placeholder="R7.10.22">
       </td>
       <td>
+        <select aria-label="日付の表示形式" bind:value={$settings.date_format}>
+          <option value="gregorian">西暦</option>
+          <option value="wareki">和暦</option>
+        </select>
+      </td>
+    </tr>
+    <tr>
+      <td colspan="3" class="date-detail">
+        <p id="date-error" role="alert" class="date-error">{dateState.error ? `× ${dateState.error}` : ''}</p>
+        <p id="date-confirmation">{describeDate(dateState.date)}</p>
+        <span>{dateState.mode === 'auto' ? '自動' : '手動'}</span>
+        <button type="button" on:click={() => { dateState = todayState(); }}>今日に戻す</button>
       </td>
     </tr>
     <tr>
@@ -185,7 +246,7 @@
   </table>
 </fieldset>
 <div style="display:flex;justify-content:center;margin-top:5px">
-    <button class="save" disabled={busy || !ready} on:click={save}>保存</button>
+    <button class="save" disabled={busy || !ready || !!dateState.error} on:click={save}>保存</button>
 </div>
 <div class="storage-actions">
   <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
@@ -239,16 +300,29 @@
     width: 240px;
     height: 125px;
   }
+  .app-viewport {
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .date-detail {
+    max-width: 240px;
+    font-size: 12px;
+  }
+  .date-error {
+    color: #B42318;
+    width: 240px;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  .date-detail button {
+    margin-left: 8px;
+  }
   .menu{
     border: 0;
     padding: 0;
     min-width: 15rem;
     margin-top:5px;
-  }
-  .app-viewport {
-    height: 100vh;
-    overflow-y: auto;
-    overflow-x: hidden;
   }
   .storage-message {
     color: #B42318;
