@@ -180,6 +180,7 @@ test('App copies an unchanged stamp once and releases its image', async () => {
   await copying;
   assert.equal(ui.events.writes.length, 1);
   assert.ok(ui.events.writes[0].includes('2025.12.31'));
+  assert.equal(ui.events.writes[0], ui.run('stampSvg'), 'copy uses the computed preview SVG');
   assert.equal(ui.events.closed, 1);
   assert.deepEqual(ui.events.error, []);
   assert.equal(ui.events.success.length, 1);
@@ -312,6 +313,8 @@ test('App waits for fonts before rendering the first copied image', async () => 
 test('App blocks copy until the initial font load completes', async () => {
   const ui = app({ pause: 'fonts' });
   ui.run('fontsReady = false');
+  await ui.flush();
+  assert.equal(ui.run('stampSvg'), '', 'preview layout waits for bundled fonts');
   const preparing = ui.run('prepareFonts()');
   await ui.reached.promise;
   await ui.copy();
@@ -319,6 +322,7 @@ test('App blocks copy until the initial font load completes', async () => {
   ui.gate.resolve();
   await preparing;
   assert.equal(ui.run('fontsReady'), true);
+  assert.match(ui.run('stampSvg'), /<svg/);
   await ui.copy();
   assert.equal(ui.events.writes.length, 1);
 });

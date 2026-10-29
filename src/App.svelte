@@ -13,8 +13,9 @@
   import Licenses from './Licenses.svelte';
 
   let dateState = todayState();
+  let fontsReady = false;
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
-  $: stampSvg = buildStampSvg($settings, str_date);
+  $: stampSvg = fontsReady ? buildStampSvg($settings, str_date) : '';
   $: imageError = (() => {
     try { validateImageSettings($settings); return ''; }
     catch (error) { return `× ${String(error)}`; }
@@ -38,7 +39,6 @@
   $: dirty = savedSnapshot !== null && (!!dateState.error
     || JSON.stringify(settingsSnapshot($settings, dateState)) !== savedSnapshot);
   $: if (!dirty && storageMessage === '△ 未保存の変更があります') storageMessage = '';
-  let fontsReady = false;
   let fontMessage = '';
 
   const prepareFonts = async () => {
@@ -152,7 +152,7 @@
     try {
       refreshToday();
       await tick();
-      const expectedSvg = buildStampSvg($settings, formatStampDate(dateState.date, $settings.date_format));
+      const expectedSvg = stampSvg;
       const outputSize = $settings.output_size;
       const rendered = await renderStampImage(expectedSvg, outputSize);
       const image = await Image.new(rendered.rgba, rendered.width, rendered.height);
@@ -160,7 +160,7 @@
         refreshToday();
         await tick();
         if (disposed || busy || !ready || dateState.error || imageError
-          || buildStampSvg($settings, formatStampDate(dateState.date, $settings.date_format)) !== expectedSvg
+          || stampSvg !== expectedSvg
           || $settings.output_size !== outputSize) {
           copyMessage = '△ 印影が変更されたためコピーを中止しました。もう一度コピーしてください。';
           toast.error(copyMessage, { position: 'bottom-center' });

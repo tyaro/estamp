@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildStampSvg, renderStampImage, validateImageSettings } from '../src/stampImage.js';
+import { STAMP_FONT, buildStampSvg, renderStampImage, validateImageSettings } from '../src/stampImage.js';
 
 const config = { top_str: '部署名<&"', btm_str: '髙橋渡邊長い日本語氏名', top_font_size: 80, mid_font_size: 60, btm_font_size: 80, output_size: 100 };
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -12,15 +12,16 @@ function deferred() {
 }
 function surface(size) {
   const order = [];
-  const fonts = deferred(), draw = deferred(), encoding = deferred();
-  const rgba = new Uint8ClampedArray(size * size * 4);
+  const fonts = deferred(), draw = deferred();
+  // A non-zero offset also checks that the returned view covers only ImageData.
+  const rgba = new Uint8ClampedArray(new ArrayBuffer(size * size * 4 + 8), 4, size * size * 4);
   rgba.set([199, 67, 50, 255], (Math.floor(size / 2) * size + 2) * 4);
   const canvas = { width: 0, height: 0,
     getContext: () => ({ getImageData: (x, y, w, h) => {
       assert.deepEqual([x, y, w, h], [0, 0, size, size]);
       order.push('rgba'); return { data: rgba, width: w, height: h };
     } }),
-    toBlob: async (callback, type) => { order.push(type); await encoding.promise; callback(new Blob(['png'], { type })); },
+    toBlob: () => assert.fail('Clipboard rendering must not encode PNG'),
   };
   const options = {
     waitFonts: async () => { order.push('font-start'); await fonts.promise; order.push('font-ready'); },
@@ -31,7 +32,7 @@ function surface(size) {
         render: async () => { await draw.promise; order.push('draw'); } };
     } },
   };
-  return { order, fonts, draw, encoding, canvas, options };
+  return { order, fonts, draw, rgba, canvas, options };
 }
 
 test('one escaped SVG source uses private bundled alias, all rows, and fits long names', () => {
@@ -44,7 +45,53 @@ test('one escaped SVG source uses private bundled alias, all rows, and fits long
   assert.doesNotMatch(svg, /<image|@font-face|https?:\/\/(?!www.w3.org)/);
 });
 
-for (const size of [50, 100, 200]) test(`render ${size}px waits fonts then drawing then PNG and preserves alpha`, async () => {
+test('wide W text and size 400 fit every band and the circular frame using measured ink bounds', () => {
+  const text = 'W'.repeat(30);
+  for (const size of [80, 400]) {
+    const calls = [];
+    const context = {
+      font: '', textAlign: '', textBaseline: '',
+      measureText(value) {
+        assert.equal(value, text);
+        assert.equal(this.textAlign, 'center');
+        assert.equal(this.textBaseline, 'alphabetic');
+        calls.push(this.font);
+        // Deliberately wider than the old ASCII 0.6em estimate, with overhang
+        // and a tall ink box exceeding 1em.
+        return { width: text.length * size * 1.1, actualBoundingBoxLeft: text.length * size * 0.6,
+          actualBoundingBoxRight: text.length * size * 0.55,
+          actualBoundingBoxAscent: size * 0.95, actualBoundingBoxDescent: size * 0.35 };
+      },
+    };
+    const svg = buildStampSvg({ ...config, top_str: text, btm_str: text,
+      top_font_size: size, mid_font_size: size, btm_font_size: size }, text, { context });
+    assert.deepEqual(calls, [700, 400, 700].map(weight => `${weight} ${size}px "${STAMP_FONT}"`));
+    const rows = [...svg.matchAll(/translate\(200 ([\d.e+-]+)\) scale\(([\d.e+-]+) ([\d.e+-]+)\)/g)];
+    assert.equal(rows.length, 3);
+    for (const [i, [, baseline, sx, sy]] of rows.entries()) {
+      const [minY, maxY, width] = [[60, 140, 220], [165, 235, 340], [260, 340, 220]][i];
+      const left = 200 - text.length * size * 0.6 * Number(sx);
+      const right = 200 + text.length * size * 0.55 * Number(sx);
+      const top = Number(baseline) - size * 0.95 * Number(sy);
+      const bottom = Number(baseline) + size * 0.35 * Number(sy);
+      assert.ok(top >= minY - 1e-9 && bottom <= maxY + 1e-9);
+      assert.ok(left >= 200 - width / 2 - 1e-9 && right <= 200 + width / 2 + 1e-9);
+      assert.ok(Number(sx) <= Number(sy) && Number(sy) <= 1);
+      for (const x of [left, right]) for (const y of [top, bottom]) {
+        assert.ok(Math.hypot(x - 200, y - 200) < 184, 'ink corners stay inside inner frame');
+      }
+    }
+  }
+});
+
+test('DOM-free measurement fallback is deterministic, including empty rows', () => {
+  const settings = { ...config, top_str: '', btm_str: 'WWW', top_font_size: 400, btm_font_size: 400 };
+  const svg = buildStampSvg(settings, '', { context: null });
+  assert.equal(svg, buildStampSvg(settings, '', { context: null }));
+  assert.doesNotMatch(svg, /NaN|Infinity/);
+});
+
+for (const size of [50, 100, 200]) test(`render ${size}px waits fonts then drawing then RGBA without PNG and preserves alpha`, async () => {
   const s = surface(size);
   let complete = false;
   const pending = renderStampImage(buildStampSvg(config, '令和7年10月22日'), size, s.options).then(result => { complete = true; return result; });
@@ -52,19 +99,20 @@ for (const size of [50, 100, 200]) test(`render ${size}px waits fonts then drawi
   s.fonts.resolve(); await new Promise(setImmediate);
   assert.deepEqual(s.order, ['font-start', 'font-ready', 'renderer']);
   assert.equal(s.canvas.width, size); assert.equal(s.canvas.height, size);
-  s.draw.resolve(); await new Promise(setImmediate);
   assert.equal(complete, false);
-  assert.deepEqual(s.order, ['font-start', 'font-ready', 'renderer', 'draw', 'image/png']);
-  s.encoding.resolve();
+  s.draw.resolve();
   const result = await pending;
-  assert.equal(result.png.type, 'image/png');
+  assert.deepEqual(s.order, ['font-start', 'font-ready', 'renderer', 'draw', 'rgba']);
+  assert.equal('png' in result, false);
   assert.equal(result.width, size); assert.equal(result.height, size);
   assert.ok(result.rgba instanceof Uint8Array);
   assert.equal(result.rgba.length, size * size * 4);
+  assert.equal(result.rgba.buffer, s.rgba.buffer);
+  assert.equal(result.rgba.byteOffset, s.rgba.byteOffset);
   assert.equal(result.rgba[3], 0); assert.ok(result.rgba.includes(255));
 });
 
-test('invalid sizes, font/render/canvas/PNG failures propagate actionable messages', async () => {
+test('invalid sizes and font/render/canvas failures propagate actionable messages', async () => {
   for (const output_size of [undefined, 0, -1, 1.5, 4097]) {
     assert.throws(() => validateImageSettings({ ...config, output_size }), /出力サイズ/);
   }
@@ -77,9 +125,6 @@ test('invalid sizes, font/render/canvas/PNG failures propagate actionable messag
   const s = surface(100); s.fonts.resolve();
   s.options.renderer.fromString = () => ({ resize() {}, render: async () => { throw new Error('描画エラー'); } });
   await assert.rejects(renderStampImage('', 100, s.options), /描画エラー/);
-  const p = surface(100); p.fonts.resolve(); p.draw.resolve();
-  p.canvas.toBlob = callback => callback(null);
-  await assert.rejects(renderStampImage('', 100, p.options), /PNGを作成できません/);
 });
 
 test('clipboard contract is RGBA -> Image resource -> writeImage; no read or base64 conversion', () => {
@@ -87,7 +132,7 @@ test('clipboard contract is RGBA -> Image resource -> writeImage; no read or bas
   assert.match(app, /Image\.new\(rendered\.rgba, rendered\.width, rendered\.height\)/);
   assert.match(app, /await writeImage\(image\)/);
   assert.match(app, /finally\s*\{\s*await image.close\(\)/);
-  for (const source of [app, read('../src/stampImage.js')]) assert.doesNotMatch(source, /btoa|atob|toDataURL|readImage|readText/);
+  for (const source of [app, read('../src/stampImage.js')]) assert.doesNotMatch(source, /btoa|atob|toDataURL|toBlob|readImage|readText/);
   const caps = JSON.parse(read('../src-tauri/capabilities/main-window.json'));
   assert.deepEqual(caps.windows, ['main']);
   assert.deepEqual(caps.permissions.filter(p => p.startsWith('clipboard-manager:')), ['clipboard-manager:allow-write-image']);
