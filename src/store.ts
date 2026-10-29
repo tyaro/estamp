@@ -7,6 +7,9 @@ export type Setting = {
 	btm_str:String,
 	btm_font_size:number,
 	output_size:number,
+	date_mode: "auto" | "manual",
+	date_format: "gregorian" | "wareki",
+	manual_date: string | null,
 }
 
 
@@ -17,6 +20,9 @@ const defaultSetting:Setting = {
 	btm_str:"名前",
 	btm_font_size:80,
 	output_size:100,
+	date_mode:"auto",
+	date_format:"gregorian",
+	manual_date:null,
 }
 
 export const settings = writable(defaultSetting);

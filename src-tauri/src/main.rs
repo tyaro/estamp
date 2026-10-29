@@ -6,6 +6,22 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DateMode {
+    #[default]
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DateFormat {
+    #[default]
+    Gregorian,
+    Wareki,
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Settings {
     top_str: String,
@@ -14,6 +30,12 @@ struct Settings {
     btm_str: String,
     btm_font_size: u32,
     output_size: u32,
+    #[serde(default)]
+    date_mode: DateMode,
+    #[serde(default)]
+    date_format: DateFormat,
+    #[serde(default)]
+    manual_date: Option<String>,
 }
 
 #[tauri::command]
@@ -86,6 +108,14 @@ mod tests {
     }
 
     #[test]
+    fn legacy_settings_default_to_automatic_gregorian() {
+        let settings: Settings = serde_json::from_str(include_str!("../Setting.json")).unwrap();
+        assert_eq!(settings.date_mode, DateMode::Auto);
+        assert_eq!(settings.date_format, DateFormat::Gregorian);
+        assert_eq!(settings.manual_date, None);
+    }
+
+    #[test]
     fn settings_save_load_round_trip() {
         let directory = TestDirectory::new();
         let path = directory.0.join("Setting.json");
@@ -96,6 +126,9 @@ mod tests {
             btm_str: "山田\\太郎".to_string(),
             btm_font_size: 19,
             output_size: 512,
+            date_mode: DateMode::Manual,
+            date_format: DateFormat::Wareki,
+            manual_date: Some("2019-05-01".to_string()),
         };
 
         assert_eq!(save_to_path(&expected, &path).unwrap(), "success");
