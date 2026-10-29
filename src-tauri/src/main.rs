@@ -109,7 +109,11 @@ mod tests {
 
     #[test]
     fn legacy_settings_default_to_automatic_gregorian() {
-        let settings: Settings = serde_json::from_str(include_str!("../Setting.json")).unwrap();
+        let legacy = r#"{
+            "top_str": "所属", "top_font_size": 80, "mid_font_size": 60,
+            "btm_str": "名前", "btm_font_size": 80, "output_size": 100
+        }"#;
+        let settings: Settings = serde_json::from_str(legacy).unwrap();
         assert_eq!(settings.date_mode, DateMode::Auto);
         assert_eq!(settings.date_format, DateFormat::Gregorian);
         assert_eq!(settings.manual_date, None);

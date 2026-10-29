@@ -8,9 +8,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json && yarn run test:date && yarn run test:save",
+    "check": "svelte-check --tsconfig ./tsconfig.json && yarn run test:date && yarn run test:save && yarn run test:app",
     "test:date": "node --test tests/date.test.js",
     "test:save": "node --test tests/save.test.js",
+    "test:app": "node --test tests/app.test.js",
     "tauri": "tauri"
   },
   "dependencies": {

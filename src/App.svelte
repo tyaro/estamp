@@ -23,6 +23,7 @@
     if (loading || dateState.error) return;
     refreshToday();
     try {
+      // Do not write the saved snapshot back over edits made while IPC is pending.
       await saveSettings(settings, dateState, config => invoke("save", { config }));
       toast.success("保存しました", { position: "top-center" });
     } catch (error) {
@@ -56,27 +57,42 @@
     };
   });
   let loading = true;
+  let copying = false;
 
   const clipboardCopy = async () => {
-    if (loading || dateState.error) return;
-    refreshToday();
-    await tick();
+    if (loading || copying || dateState.error) return;
+    copying = true;
     try {
+      refreshToday();
+      await tick();
+      if (dateState.error) {
+        toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
+        return;
+      }
       const src = document.querySelector<SVGSVGElement>('#stamp');
       if (!src) throw new Error('印影が見つかりません');
-      const svgText = src.outerHTML.replace(/NS[0-9]+:href/g, 'xlink:href');
+      const expectedSvg = src.outerHTML;
+      const outputSize = $settings.output_size;
+      const svgText = expectedSvg.replace(/NS[0-9]+:href/g, 'xlink:href');
       const canvas = document.createElement('canvas');
       canvas.width = src.width.baseVal.value;
       canvas.height = src.height.baseVal.value;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('画像を作成できません');
       const v = Canvg.fromString(ctx, svgText);
-      v.resize($settings.output_size, $settings.output_size, 'xMidYMid meet');
+      v.resize(outputSize, outputSize, 'xMidYMid meet');
       await v.render();
       const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const image = await Image.new(new Uint8Array(data), width, height);
       try {
-        if (dateState.error) return;
+        // Rendering and Image.new both yield. Flush date/format edits before writing.
+        refreshToday();
+        await tick();
+        if (dateState.error || document.querySelector('#stamp')?.outerHTML !== expectedSvg
+          || $settings.output_size !== outputSize) {
+          toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
+          return;
+        }
         await writeImage(image);
       } finally {
         await image.close();
@@ -85,13 +101,15 @@
     } catch (error) {
       console.error('画像コピーに失敗しました', error);
       toast.error('画像コピーに失敗しました', { position: 'bottom-center' });
+    } finally {
+      copying = false;
     }
   };
 </script>
 <Toaster />
 <div class="app-viewport">
 <div class="main">
-  <button aria-label="印影をコピー" disabled={loading || !!dateState.error} on:click={()=>clipboardCopy()}>
+  <button aria-label="印影をコピー" disabled={loading || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
   <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
  
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>

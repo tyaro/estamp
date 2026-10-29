@@ -39,6 +39,18 @@ test('NFKC, lowercase, first year, and western separators', () => {
   for (const input of ['R元.5.1', 'r1.5.1', '令和元年5月1日', 'Ｒ元．５．１']) assert.equal(parseDate(input), '2019-05-01');
 });
 
+test('leading and trailing whitespace including full-width spaces is trimmed', () => {
+  for (const input of ['　Ｒ７．１０．２２　', '\t 令和7年10月22日 \n', '　 2025/10/22 \t　']) {
+    assert.equal(parseDate(input), '2025-10-22');
+    const edited = editDate(todayState(), input);
+    assert.equal(edited.error, '');
+    assert.equal(edited.date, '2025-10-22');
+    assert.equal(edited.input, input);
+  }
+  assert.throws(() => parseDate(' \t　\n'), /日付を入力/);
+  assert.throws(() => parseDate('R7. 10.22'), /形式/);
+});
+
 test('leap days, nonexistent dates, lower bound, and malformed input', () => {
   for (const input of ['R6.2.29', '2024-02-29', '2000/2/29']) assert.match(parseDate(input), /-02-29$/);
   for (const input of ['R7.2.29', '1900/2/29', '2025/4/31', '2025/0/1', '2025/13/1', '2025/1/0', '2025/1/32']) assert.throws(() => parseDate(input), /存在しません/);
