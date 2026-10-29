@@ -1,31 +1,67 @@
 <script lang="ts">
   import {Canvg} from 'canvg';
-  import { settings,type Setting } from './store';
+  import { settings,type LoadedSettings } from './store';
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { Image } from '@tauri-apps/api/image';
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import toast, { Toaster } from 'svelte-french-toast';
 
-  const save = async() => {
-    let config = $settings
-    let result = await invoke("save",{config});
-    toast.success("save complete!!",{position:"top-center"})
-    console.log(result)
-  }
+  let busy = true;
+  let ready = false;
+  let revision: string | null = null;
+  let storageMessage = '';
+
+  const applyLoaded = (result: LoadedSettings) => {
+    $settings = result.settings;
+    revision = result.revision;
+    storageMessage = result.warning ?? '';
+    ready = true;
+  };
+
+  const save = async () => {
+    if (busy || !ready) return;
+    busy = true;
+    try {
+      // Save a snapshot; do not replace edits made while IPC is pending.
+      revision = await invoke<string>("save", { config: { ...$settings }, revision });
+      storageMessage = '';
+      toast.success("保存しました", { position: "top-center" });
+    } catch (error) {
+      storageMessage = `× 保存に失敗しました：${String(error)}`;
+    } finally {
+      busy = false;
+    }
+  };
 
   const load = async () => {
-    let result:Setting = await invoke("load",{})
-    $settings = result
-  }
+    busy = true;
+    try {
+      applyLoaded(await invoke<LoadedSettings>("load"));
+    } catch (error) {
+      ready = false;
+      storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
+    } finally {
+      busy = false;
+    }
+  };
 
-  onMount(async ()=>{
-    await load()
-  })
+  const importLegacy = async () => {
+    if (busy || !ready || revision !== null) return;
+    busy = true;
+    try {
+      applyLoaded(await invoke<LoadedSettings>("import_legacy"));
+      toast.success("旧設定を取り込みました", { position: "top-center" });
+    } catch (error) {
+      storageMessage = `× 旧設定を取り込めませんでした：${String(error)}`;
+    } finally {
+      busy = false;
+    }
+  };
 
-
-
+  onMount(() => { void load(); });
   const clipboardCopy = async () => {
+    if (!ready) return;
     try {
       const src = document.querySelector<SVGSVGElement>('#stamp');
       if (!src) throw new Error('印影が見つかりません');
@@ -59,8 +95,12 @@
 
 </script>
 <Toaster />
+<div class="app-viewport">
+{#if storageMessage}
+  <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} role="alert">{storageMessage}</p>
+{/if}
 <div class="main">
-  <button on:click={()=>clipboardCopy()}>
+  <button disabled={!ready} on:click={()=>clipboardCopy()}>
   <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
  
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
@@ -78,7 +118,7 @@
 </svg>
 </button>
 </div>
-<div class="menu">
+<fieldset class="menu" disabled={busy || !ready}>
   <table>
     <tr>
       <th>位置</th>
@@ -129,13 +169,19 @@
       </td>
     </tr>
   </table>
-</div>
+</fieldset>
 <div style="display:flex;justify-content:center;margin-top:5px">
-    <button class="save" on:click={save}>保存</button>
+    <button class="save" disabled={busy || !ready} on:click={save}>保存</button>
+</div>
+<div class="storage-actions">
+  <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
+  {#if ready && revision === null}
+    <button disabled={busy} on:click={importLegacy}>旧設定を取り込む</button>
+    <p>初回のみ、実行ファイルと同じフォルダーの Setting.json を取り込みます。</p>
+  {/if}
 </div>
 
-
-
+</div>
 
 <style>
   /* @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1&display=swap');ß */
@@ -175,8 +221,36 @@
     height: 125px;
   }
   .menu{
+    border: 0;
+    padding: 0;
     min-width: 15rem;
     margin-top:5px;
+  }
+  .app-viewport {
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .storage-message {
+    color: #B42318;
+    background: #F7F6F2;
+    padding: 8px;
+    margin: 0;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .storage-actions {
+    display: grid;
+    gap: 4px;
+    margin: 8px;
+    font-size: 14px;
+  }
+  .storage-warning {
+    color: #8A5700;
+  }
+  .storage-actions button {
+    min-height: 32px;
+    border-radius: 8px;
   }
 
 </style>
