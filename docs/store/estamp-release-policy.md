@@ -68,6 +68,7 @@ Partner Center の対象製品 estamp の Product identity は、全5項目取�
 
 - UI は **BIZ UDPゴシック（BIZ UDPGothic）**、印影は **しっぽり明朝 B1（Shippori Mincho B1）**。印影書体を UI の見出しやボタンに使わない。[デザイン仕様の書体ルール](../design/estamp-design-rules.md#1-banto-works-共通ルール) に従う。
 - PR-00 では選定結果の記録だけを行う。両書体のファイル取得、ウエイト確認、`@font-face`、既存 Google Fonts import の除去、OFL・著作権表示の同梱は PR-03。出力画像への反映確認は PR-05。
+- 2026-10-30 JST PR-03 実装: 両書体の400/700を原本のまま同梱し、外部フォントimportを除去。アプリ内から一覧・OFL全文・MIT全文を表示できる。取得元・著作権・ハッシュ・PR-07のMSIX収集対象は [第三者ライセンス一覧](../../THIRD-PARTY-NOTICES.md)、レビュー引継ぎは [計画のPR-03実施記録](estamp-plan.md#pr-03書体の同梱と第三者ライセンス表示05-人日) を参照。PR-05の画像品質実機判定は残る。
 - **起動時に印影だけを表示する小さなウィンドウは意図した仕様**。設定は基本的に初回だけ行い、通常利用では印影を使う。設定欄を常時見せるための拡大は行わない。
 - 既存設定の初期 `width: 250` / `height: 120`、`maxWidth: 250` / `maxHeight: 310`、`resizable: true` を維持する。PR-06 の画面仕上げでも、この利用意図を前提に確認する。
 

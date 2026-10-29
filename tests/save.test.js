@@ -94,7 +94,7 @@ test('automatic save sends a null manual date without changing the live settings
   assert.deepEqual(get(settings), initial);
 });
 
-test('save retains unknown seal types and nested future fields while normalizing dates', async () => {
+test('save sends known fields only and preserves unknown data in the opaque revision', async () => {
   const future = {
     ...initialSettings(), stamp_type: 'future_角印',
     future_options: { nested: [true, null, '値'], zero: 0, empty: '' },
@@ -103,14 +103,15 @@ test('save retains unknown seal types and nested future fields while normalizing
   const settings = writable(future);
   settings.update(value => ({ ...value, top_str: '編集済み', date_format: 'wareki' }));
   let sent;
-  const revision = await saveSettings(settings, editDate(todayState(), 'Ｒ元．５．１'), '\ufefforiginal', async args => {
+  const opaque = '\ufeff{"future_field":9007199254740993,"future_options":{ "nested": [9007199254740993] }}';
+  const revision = await saveSettings(settings, editDate(todayState(), 'Ｒ元．５．１'), opaque, async args => {
     // Exercise the JSON boundary used by Tauri, including the BOM-bearing token.
     sent = JSON.parse(JSON.stringify(args));
     return 'new revision';
   });
   assert.deepEqual(sent, {
-    config: { ...future, top_str: '編集済み', date_format: 'wareki', date_mode: 'manual', manual_date: '2019-05-01' },
-    revision: '\ufefforiginal',
+    config: { ...initialSettings(), stamp_type: 'future_角印', top_str: '編集済み', date_format: 'wareki', date_mode: 'manual', manual_date: '2019-05-01' },
+    revision: opaque,
   });
   assert.equal(revision, 'new revision');
   assert.deepEqual(get(settings).future_options, future.future_options);

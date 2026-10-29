@@ -7,7 +7,9 @@
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import toast, { Toaster } from 'svelte-french-toast';
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
-  import { saveSettings } from './save.js';
+  import { saveSettings, settingsSnapshot } from './save.js';
+  import { loadStampFonts } from './fonts.js';
+  import Licenses from './Licenses.svelte';
 
   let dateState = todayState();
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
@@ -27,10 +29,26 @@
   let storageMessage = '';
   let legacyAvailable = false;
   let confirmingImport = false;
+  let savedSnapshot: string | null = null;
+  let dirty = false;
+  $: dirty = savedSnapshot !== null && (!!dateState.error
+    || JSON.stringify(settingsSnapshot($settings, dateState)) !== savedSnapshot);
+  let fontsReady = false;
+  let fontMessage = '';
+
+  const prepareFonts = async () => {
+    try {
+      await loadStampFonts();
+      if (!disposed) { fontsReady = true; fontMessage = ''; }
+    } catch (error) {
+      if (!disposed) fontMessage = `× 書体を読み込めません：${String(error)}`;
+    }
+  };
 
   const applyLoaded = (result: LoadedSettings) => {
     $settings = result.settings;
     dateState = restoreDate(result.settings);
+    savedSnapshot = JSON.stringify(settingsSnapshot($settings, dateState));
     revision = result.revision;
     storageMessage = result.warning ?? '';
     ready = true;
@@ -41,10 +59,13 @@
     refreshToday();
     busy = true;
     try {
+      const snapshot = JSON.stringify(settingsSnapshot($settings, dateState));
       // Save a snapshot; do not replace edits made while IPC is pending.
       revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
-      storageMessage = '';
-      toast.success("保存しました", { position: "top-center" });
+      savedSnapshot = snapshot;
+      dirty = !!dateState.error || JSON.stringify(settingsSnapshot($settings, dateState)) !== snapshot;
+      storageMessage = dirty ? '△ 未保存の変更があります' : '';
+      if (!dirty) toast.success("保存しました", { position: "top-center" });
     } catch (error) {
       storageMessage = `× 保存に失敗しました：${String(error)}`;
     } finally {
@@ -98,6 +119,7 @@
 
   onMount(() => {
     void load();
+    void prepareFonts();
     const timer = window.setInterval(refreshToday, 1000);
     window.addEventListener('focus', refreshToday);
     document.addEventListener('visibilitychange', refreshToday);
@@ -109,10 +131,12 @@
     };
   });
   const clipboardCopy = async () => {
-    if (busy || !ready || copying || dateState.error) return;
+    if (busy || !ready || !fontsReady || copying || dateState.error) return;
     copying = true;
     try {
       refreshToday();
+      // Canvg draws on this document's Canvas; both explicit SVG weights must be ready.
+      await loadStampFonts();
       await tick();
       if (dateState.error) {
         toast.error('印影が変更されたためコピーを中止しました。もう一度コピーしてください。', { position: 'bottom-center' });
@@ -161,7 +185,8 @@
   <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} role="alert">{storageMessage}</p>
 {/if}
 <div class="main">
-  <button aria-label="印影をコピー" disabled={busy || !ready || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
+  <button aria-label="印影をコピー" disabled={busy || !ready || !fontsReady || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
+  {#if fontsReady}
   <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
  
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
@@ -170,15 +195,22 @@
   <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.top_font_size}   x=200 y=100 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {$settings.top_str}
   </text>
-  <text transform={`translate(200 200) scale(${dateTextScale} 1)`} font-size={$settings.mid_font_size}  x=0 y=0 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
+  <text font-family='Shippori Mincho B1' font-weight='400' transform={`translate(200 200) scale(${dateTextScale} 1)`} font-size={$settings.mid_font_size}  x=0 y=0 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {str_date}
   </text>
   <text font-family='Shippori Mincho B1' font-weight='bold' font-size={$settings.btm_font_size} x=200 y=300 fill="#ff0000" text-anchor="middle" dominant-baseline="central">
     {$settings.btm_str}
   </text>
 </svg>
+  {:else}
+    書体を読込中…
+  {/if}
 </button>
 </div>
+{#if fontMessage}
+  <p class="storage-message" role="alert">{fontMessage}</p>
+  <button on:click={prepareFonts}>書体を再読込</button>
+{/if}
 <fieldset class="menu" disabled={busy || !ready}>
   <table>
     <tr>
@@ -248,6 +280,9 @@
 <div style="display:flex;justify-content:center;margin-top:5px">
     <button class="save" disabled={busy || !ready || !!dateState.error} on:click={save}>保存</button>
 </div>
+{#if dirty && !storageMessage}
+  <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
+{/if}
 <div class="storage-actions">
   <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
   {#if ready && legacyAvailable}
@@ -261,12 +296,10 @@
   {/if}
 </div>
 
+<Licenses />
 </div>
 
 <style>
-  /* @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1&display=swap');ß */
-  @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;700&display=swap');
-
   input{
     border-radius: 8px;
     text-align: center;
@@ -307,7 +340,7 @@
   }
   .date-detail {
     max-width: 240px;
-    font-size: 12px;
+    font-size: 14px;
   }
   .date-error {
     color: #B42318;

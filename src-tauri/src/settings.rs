@@ -77,9 +77,6 @@ pub struct Settings {
     pub manual_date: Option<String>,
     #[serde(default)]
     pub stamp_type: StampType,
-    // Preserve future fields through load -> IPC -> save, including nested values.
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -96,7 +93,6 @@ impl Default for Settings {
             date_format: DateFormat::default(),
             manual_date: None,
             stamp_type: StampType::default(),
-            extra: BTreeMap::new(),
         }
     }
 }
@@ -125,17 +121,21 @@ impl DecodeError {
 
 fn decode(bytes: &[u8]) -> Result<Settings, DecodeError> {
     let json = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-    let value: serde_json::Value = serde_json::from_slice(json)
+    let value: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_slice(json)
         .map_err(|error| DecodeError::Corrupt(format!("設定の JSON が壊れています：{error}")))?;
     // Check the version before attempting to deserialize fields unknown to this build.
     if let Some(version) = value.get("schema_version") {
-        if version != &serde_json::json!(SCHEMA_VERSION) {
+        let version: u64 = serde_json::from_str(version.get()).map_err(|_| {
+            DecodeError::Corrupt("schema_version は非負の整数で指定してください".to_string())
+        })?;
+        if version != u64::from(SCHEMA_VERSION) {
             return Err(DecodeError::Unsupported(format!(
                 "この設定の schema（{version}）には対応していません。ファイルを変更せず、読込・保存を中止しました。"
             )));
         }
     }
-    serde_json::from_value(value)
+    // Deserialize only known fields. Unknown values never cross the numeric JS boundary.
+    serde_json::from_slice(json)
         .map_err(|error| DecodeError::Corrupt(format!("設定の形式が正しくありません：{error}")))
 }
 
@@ -209,7 +209,8 @@ impl SettingsStore {
     pub fn save(&self, config: &Settings, revision: Option<&str>) -> Result<String, String> {
         let _lock = self.lock()?;
         self.check_revision(revision)?;
-        self.write(config)
+        // The lock and revision comparison above guarantee this is the current file.
+        self.write(config, revision)
     }
 
     fn check_revision(&self, revision: Option<&str>) -> Result<(), String> {
@@ -235,7 +236,8 @@ impl SettingsStore {
             format!("実行ファイルと同じフォルダーの旧 Setting.json を読めません：{error}")
         })?;
         let settings = decode(&bytes).map_err(DecodeError::message)?;
-        let revision = self.write(&settings)?;
+        let original = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
+        let revision = self.write(&settings, Some(original))?;
         Ok(LoadedSettings {
             settings,
             revision: Some(revision),
@@ -244,11 +246,24 @@ impl SettingsStore {
     }
 
     // Caller holds the lock from the read/version check through replacement.
-    fn write(&self, config: &Settings) -> Result<String, String> {
+    fn write(&self, config: &Settings, original: Option<&str>) -> Result<String, String> {
         if config.schema_version != SCHEMA_VERSION {
             return Err("対応していない schema の設定は保存できません。".to_string());
         }
-        let json = serde_json::to_string_pretty(config)
+        // RawValue preserves each unknown value's original bytes, including large
+        // integers, decimal notation, escapes and whitespace inside nested objects.
+        // raw_value is a feature of the already locked serde_json, not a new crate.
+        let mut fields: BTreeMap<String, Box<serde_json::value::RawValue>> = original
+            .map(|json| serde_json::from_str(json.trim_start_matches('\u{feff}')))
+            .transpose()
+            .map_err(|error| format!("設定を変換できません：{error}"))?
+            .unwrap_or_default();
+        let known = serde_json::to_string(config)
+            .map_err(|error| format!("設定を変換できません：{error}"))?;
+        let known: BTreeMap<String, Box<serde_json::value::RawValue>> =
+            serde_json::from_str(&known).map_err(|error| error.to_string())?;
+        fields.extend(known);
+        let json = serde_json::to_string_pretty(&fields)
             .map_err(|error| format!("設定を変換できません：{error}"))?;
         let temporary_path = unique_path(&self.directory, "tmp");
         let mut file = OpenOptions::new()
@@ -360,14 +375,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_stamp_and_fields_survive_load_ipc_edit_and_save() {
+    fn unknown_stamp_and_raw_fields_survive_load_ipc_edit_and_save() {
         let directory = TestDirectory::new();
         let store = directory.store();
         fs::create_dir_all(&store.directory).unwrap();
-        let mut future = serde_json::to_value(Settings::default()).unwrap();
-        future["stamp_type"] = serde_json::json!("future_角印");
-        future["future_options"] = serde_json::json!({"nested": [true, null, "値"]});
-        let original = serde_json::to_vec(&future).unwrap();
+        let original = r#"{"schema_version":1,"stamp_type":"future_角印",
+          "future_field":9007199254740993,
+          "future_options":{ "nested": [9007199254740993, 123456789012345678901234567890, 1.2300e+40, "\u5024", { "enabled":true }] }}"#;
         fs::write(store.path(), &original).unwrap();
         let loaded = store.load().unwrap();
         assert_eq!(
@@ -375,18 +389,69 @@ mod tests {
             StampType::Unknown("future_角印".into())
         );
         assert!(loaded.warning.is_none());
-        assert_eq!(fs::read(store.path()).unwrap(), original);
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), original);
         // Match the frontend IPC round trip, including its settings snapshot.
         let ipc = serde_json::to_value(&loaded.settings).unwrap();
+        assert!(ipc.get("future_field").is_none());
+        assert!(ipc.get("future_options").is_none());
         let mut edited: Settings = serde_json::from_value(ipc).unwrap();
         edited.top_str = "編集済み".into();
-        store.save(&edited, loaded.revision.as_deref()).unwrap();
-        future["top_str"] = serde_json::json!("編集済み");
-        assert_eq!(
-            serde_json::to_value(store.load().unwrap().settings).unwrap(),
-            future
-        );
+        let mut revision = loaded.revision.unwrap();
+        for _ in 0..2 {
+            revision = store.save(&edited, Some(&revision)).unwrap();
+            assert_eq!(store.load().unwrap().settings, edited);
+            assert_raw_extras_equal(original, &fs::read_to_string(store.path()).unwrap());
+        }
         assert_eq!(fs::read_dir(&store.directory).unwrap().count(), 2);
+    }
+
+    fn assert_raw_extras_equal(original: &str, saved: &str) {
+        let raw = |json: &str| -> BTreeMap<String, Box<serde_json::value::RawValue>> {
+            serde_json::from_str(json).unwrap()
+        };
+        for name in ["future_field", "future_options"] {
+            assert_eq!(raw(original)[name].get(), raw(saved)[name].get());
+        }
+    }
+
+    #[test]
+    fn import_preserves_raw_unknown_values_without_exposing_them_to_js() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        let source = directory.0.join("Setting.json");
+        let original = r#"{"future_field":9007199254740993,"future_options":{ "nested": [9007199254740993, 1.00e+30] }}"#;
+        fs::write(&source, original).unwrap();
+        let imported = store.import_legacy(&source, None).unwrap();
+        let ipc = serde_json::to_value(&imported.settings).unwrap();
+        assert!(ipc.get("future_field").is_none());
+        let saved = store
+            .save(&imported.settings, imported.revision.as_deref())
+            .unwrap();
+        assert_raw_extras_equal(original, &saved);
+        assert_eq!(fs::read_to_string(source).unwrap(), original);
+    }
+
+    #[test]
+    fn null_and_string_schema_versions_are_quarantined_as_malformed() {
+        for version in ["null", "\"1\""] {
+            let directory = TestDirectory::new();
+            let store = directory.store();
+            fs::create_dir_all(&store.directory).unwrap();
+            let original = format!(r#"{{"schema_version":{version}}}"#);
+            fs::write(store.path(), &original).unwrap();
+            let loaded = store.load().unwrap();
+            assert_eq!(loaded.settings, Settings::default());
+            assert!(loaded.revision.is_none());
+            assert!(loaded.warning.unwrap().contains("退避"));
+            assert!(!store.path().exists());
+            let backup = fs::read_dir(&store.directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path.to_string_lossy().ends_with(".corrupt.json"))
+                .unwrap();
+            assert_eq!(fs::read_to_string(backup).unwrap(), original);
+            store.save(&loaded.settings, None).unwrap();
+        }
     }
 
     #[test]
@@ -600,7 +665,7 @@ mod tests {
         let directory = TestDirectory::new();
         let store = directory.store();
         fs::create_dir_all(&store.directory).unwrap();
-        let future = r#"{"schema_version":999,"future_field":true}"#;
+        let future = r#"{"schema_version":2,"future_field":true}"#;
         fs::write(store.path(), future).unwrap();
         assert!(store.load().unwrap_err().contains("対応していません"));
         assert!(store.save(&Settings::default(), Some(future)).is_err());
@@ -751,7 +816,7 @@ mod tests {
         fs::write(&marker, "keep").unwrap();
         let _lock = store.lock().unwrap();
         assert!(store
-            .write(&Settings::default())
+            .write(&Settings::default(), None)
             .unwrap_err()
             .contains("置き換え"));
         assert_eq!(fs::read_to_string(marker).unwrap(), "keep");

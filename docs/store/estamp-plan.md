@@ -121,6 +121,27 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 
 上流の Shippori Mincho B1 は OFL 1.1 を掲げ、書体の同梱時には著作権・ライセンス表示等の条件がある。書体を MIT に置き換えず、アプリの MIT と分けて扱う。実際に採用するファイルを部門レビューの対象にする。[上流 OFL](https://raw.githubusercontent.com/google/fonts/main/ofl/shipporiminchob1/OFL.txt)
 
+2026-10-30 JST 実施記録（PR-03）:
+
+- UI は BIZ UDPGothic Regular (400) / Bold (700)。本文・入力・ボタンに400、既存の表見出しとライセンス見出しに700が必要。印影は Shippori Mincho B1 Regular (400) / Bold (700)。日付を400、既存の上段・下段を700として、SVG の全テキストに明示した。使用しない500・600・800は同梱しない。
+- `google/fonts` commit `6157dfaa640ca5738b4d1a7070fe389c3036d7fc` の `ofl/bizudpgothic/` / `ofl/shipporiminchob1/` から取得済みの TTF・OFL.txt 原本を `public/fonts/<family>/` に無改変で同梱。サブセット化・形式変換なし。著作権行・原本パス・OFL 自体のハッシュは [第三者ライセンス一覧](../../THIRD-PARTY-NOTICES.md) に記録した。
+- `@font-face` は同梱ファイルのみを参照し、Google Fonts import を除去。`document.fonts.load` で印影400/700の両方を待ち、プレビューの表示と最初のCanvasコピーを制御する。読込失敗は画面表示・再試行可能。ウィンドウ寸法は変更しない。
+- 設定下部「ライセンス」で一覧・両OFL全文・本体MIT全文をオフライン表示。Tauri resources にMIT・一覧・両OFLを指定し、`dist/fonts/` にTTFとOFLを出力する。Skeletonテーマにも外部フォントimportがあったため、配色等を保った `src/theme.css` へ切替え、外部import除去とUI書体変数だけを変更した。テーマのMIT原文も `licenses/skeleton-LICENSE.txt` に同梱し、画面表示・resources・PR-07収集の対象に含める。検査は実際にimportする依存CSSもたどる。
+- 同時修正: schema_version の null / 文字列は破損退避し、整数2は従来どおり読込・上書きを拒否する。未知フィールドはRustでRawValue原文を保持し、revision照合後に既知項目だけを合成する（既存serde_jsonのraw_value機能のみ有効化、新規crateなし）。保存完了時に現在の編集状態と保存開始時のスナップショットを比較し、差があれば「未保存の変更があります」を表示してdirtyを維持する。
+
+同梱 TTF の SHA-256:
+
+| ファイル | SHA-256 |
+| --- | --- |
+| `BIZUDPGothic-Bold.ttf` | `30eba52fc837e8b62c97d4b82e6706583149fb7294e3712dd71a655eaea80a90` |
+| `BIZUDPGothic-Regular.ttf` | `258d7156c165f2ff774b6efee637c22c3b950de0d8a10e501137061bc8085d01` |
+| `ShipporiMinchoB1-Bold.ttf` | `d20f3981afb8bceda5fdf8f0fb29ba51eb21518644612ccd8a183e5bd433e25a` |
+| `ShipporiMinchoB1-Regular.ttf` | `89403e4b2a9ca0db9f832b893cfbfd90506c7c674cd640ba8a0ee128c34de7a4` |
+
+引継ぎ・受入レビュー: デザイン部は部署名・日本語氏名・和暦の字形、400/700の可読性、長い文字列の収まりを確認する。セキュリティ・リリース部は原本とハッシュ・著作権行・OFL全文・本体MITとの分離を確認する（BIZのOFL著作権URLは原文どおりでMETADATAとは異なる）。PR-05は未インストール・オフライン環境のSVGプレビュー／Canvasコピーの字形一致、指定px・透過・Word/Excel等への貼付けを実機判定する。PR-07は実行ファイルとフロント資源（4本のTTF）、`LICENSE`、`THIRD-PARTY-NOTICES.md`、`licenses/fonts/<family>/OFL.txt` を正式MSIX stagingへ収集し、パッケージ内の原文・ハッシュ・オフライン表示を照合する。Windows WebView2・DPI・GUIの実機確認とPR-06のCSP固定は未完了。
+
+2026-10-30 JST PR-03 最終検証: Mac ARM64 / macOS 27.2 (26B123) / Node 24.22.1 / Yarn 1.22.22 / Rust・Cargo 1.99.1。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2` で順番に実行し、`yarn run check`（診断0 errors / 0 warnings、日付10・保存4・App26・書体4＝JS44件）、`cargo check`、`cargo test`（24件）、`yarn build`、Tauri `build --no-bundle` がすべて終了コード0。distの4本のTTF・2本のOFLは取得済み原本とバイト一致し、全distファイルに外部フォントURLなし。Tauri build後も再照合済み。lockファイルは変更なし。Yarnのglobal-folder・Browserslist通知、初回RustテストのXcode SDK探索警告、release時の `rust-objcopy` / `libLLVM.dylib` 不足によるstrip警告は環境起因として記録し、共有toolchainは変更していない。固定Rust 1.95.0・Windows・GUI・MSIXは未検証。
+
 ### PR-04：日付の正常化・和暦・手入力（1.5〜2.5 人日）
 
 - **目的:** 今日の日付と指定日を、誤日付・日付ずれなく印影へ反映する。
