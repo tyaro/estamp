@@ -4,9 +4,9 @@
 
 ## 実装基準と範囲
 
-対象は `/Users/tyaromax/Documents/Codex/estamp`、ブランチは `feat/pr-00-release-identity`。基準コミットは **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**（PR-01 マージ済みの master）。[計画書](estamp-plan.md) の現状調査は `8599f0e` 当時の履歴であり、今回の基準とは異なる。
+対象は本 estamp リポジトリ、ブランチは `feat/pr-00-release-identity`。基準コミットは **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**（PR-01 マージ済みの master）。[計画書](estamp-plan.md) の現状調査は `8599f0e` 当時の履歴であり、今回の基準とは異なる。
 
-この基準では Tauri v2、`jp.tyaro.estamp`、設定の `save` / `load`、上段・下段の編集、日付生成、公式 clipboard-manager によるコピー経路が存在する。設定は CWD 相対の `Setting.json` で、追跡済みの実物は `src-tauri/Setting.json`。schema は `top_str` / `btm_str`（文字列）、`top_font_size` / `mid_font_size` / `btm_font_size` / `output_size`（Rust では `u32`）である。日付形式や schema version はまだ保存していない。設定移行の検討材料として PR-02 へ渡し、自動移行の完了や別の配布版との互換性は表明しない。別リポジトリ・worktree の調査は行わない。
+この基準では Tauri v2、`jp.tyaro.estamp`、設定の `save` / `load`、上段・下段の編集、日付生成、公式 clipboard-manager によるコピー経路が存在する。設定は起動時の作業ディレクトリ（CWD）を基準とする `Setting.json` に読み書きする。追跡済みの `src-tauri/Setting.json` は開発用ファイルであり、schema の参照用サンプルとして扱う。利用者の旧環境にある設定の実物ではなく、実際の保存場所は起動時の CWD に依存し、未確認である。schema は `top_str` / `btm_str`（文字列）、`top_font_size` / `mid_font_size` / `btm_font_size` / `output_size`（Rust では `u32`）である。日付形式や schema version はまだ保存していない。設定移行の検討材料として PR-02 へ渡し、自動移行の完了や別の配布版との互換性は表明しない。別リポジトリ・worktree の調査は行わない。
 
 PR-00 は公開方針、LICENSE、Cargo / package / Tauri の製品メタデータ、決定事項と外部作業の記録に限定する。PR-01 の再実装、保存先変更、書体の取得・同梱、日付・和暦の実装、コピー経路の変更、UI の変更、MSIX 生成・署名・提出は含めない。
 
@@ -40,6 +40,8 @@ PR-00 は公開方針、LICENSE、Cargo / package / Tauri の製品メタデー�
 `Cargo.toml` の既存著者 `K.T` は保持する。著者、著作権者、発行元表示名、Store の Publisher はそれぞれ別の情報であり、自動的に同じ値とは扱わない。
 
 MIT 本文はリポジトリ直下に置く。Tauri は `bundle.licenseFile` で `../LICENSE` を指定し、同じファイルを `bundle.resources` で配布資源 `LICENSE` として含める。PR-07 の MSIX staging にもこの原本を収集し、PR-08 で最終配布物に本文と著作権表示があることを検証する。アプリ内でのライセンス表示は PR-06。依存ライブラリや書体の著作権・ライセンスは本体の MIT に置き換えず、書体は PR-03 で OFL 原文と対応する著作権表示を別途収集・同梱する。
+
+`bundle.licenseFile` により Windows の EXE（NSIS）／MSI（WiX）インストーラーに使用許諾の同意画面が追加される可能性がある。Windows の bundle ありビルド・導入は未検証で、既存 CI の `--no-bundle` では確認できない。Store 外向け EXE／MSI は、発行元表示名を確定し、同意画面・発行元表示・更新挙動を Windows で確認するまで配布しない。
 
 ## Store 識別情報：暫定・転記待ち
 
@@ -79,4 +81,16 @@ Partner Center のアカウント確認・アプリ名予約・Product identity 
 | 品質 | Windows 11 x64 端末を確保し、PR-07 試作時に OS ビルド・WebView2 等を記録。PR-08 で最終品質確認 |
 | 開発 | PR-02 に既存設定 schema、PR-03 に両書体の選定、PR-04 にデザインの日付仕様、PR-07 に MIT 原本・正式 identity を渡す |
 
-本人にしかできない作業の一覧と今回の検証結果は [PR-00 実装結果](../../outputs/pr00-final1.md) に記録する。
+### ユーザー・担当部門の作業（未実施）
+
+1. **暫定表記の最終確認:** 発行元表示名 Banto Works、本体 MIT、`Copyright (c) 2026 Banto Works` の権利関係・年を本人が確認する。権利者表記はユーザー確認中で、現時点では指定値を維持する。
+2. **Partner Center アカウント確認・名前予約:** 本人が対象アカウント・発行元を確認し、estamp の名前の利用可否・予約完了を記録する。
+3. **Product identity の転記:** 本文の表と手順に従い、取得日・対象製品・確認者を添えて正式値を記録する。PR-07 の正式 MSIX 受け入れ前にプレースホルダを解消する。
+4. **既存配布物の情報提供（存在する場合）:** 旧ポータブル版などの所在・入手経路・利用者環境の設定実物と保存場所を提供する。開発用サンプルだけで旧版互換を確認済みとせず、追加対応は別途判断する。
+5. **部門への手配:** 企画へ無料方針・初回機能と掲載／プライバシー骨子、デザインへ PR-03 前の書体ウエイト／ライセンス資料と PR-06 前の画面・アイコン、品質へ Windows 11 x64 端末確保を依頼する。本作業では依頼メッセージの送信・外部アカウント操作を行っていない。
+
+## PR-00 初回実装時の検証要約
+
+2026-10-29 の初回実装時（本レビュー対応前）に、Mac arm64 / Rust 1.99.1 で `corepack yarn run check`（診断エラー0・警告0）、`cargo check -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml`、`cargo test -j 2 --locked --offline --manifest-path src-tauri/Cargo.toml` が成功した。既存テスト `settings_save_load_round_trip` は1件成功・失敗0件。メタデータの整合性と、debug 資源の `LICENSE` がルート原本と一致することも確認した。
+
+指定 PATH の stable Rust 1.99.1 での結果であり、固定 Rust 1.95.0 や Windows での検証結果ではない。Windows の最終配布物・MSIX への実同梱、GUI・clipboard、Store 操作は未検証で、後続 PR の受け入れ対象とする。作業メモ・生ログはローカル保存とし、追跡文書から参照しない。

@@ -6,7 +6,7 @@
 
 2026-10-29 PR-00 決定追記: 今回の実装基準は PR-01 マージ済みの **`8bc6ea9e659424d6cc9b69c5e7d348bd3831013d`**、作業ブランチは `feat/pr-00-release-identity`。公開条件・暫定表記・Store 値のプレースホルダと転記手順は [公開方針](estamp-release-policy.md) を正とする。本体 MIT、`Copyright (c) 2026 Banto Works` はユーザー指定の暫定表記として採用。書体は UI＝BIZ UDPゴシック、印影＝しっぽり明朝 B1 に決定（実装は PR-03）。小さな印影だけの起動画面は意図した仕様として維持する。日付の直接入力等は既に確定した [デザイン仕様](../design/estamp-design-rules.md) が本計画の旧記述より優先し、実装は PR-04 のままとする。
 
-作成時の対象: `/Users/tyaromax/development/tauri/estamp`、当時確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
+作成時の対象: 本 estamp リポジトリ、当時確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
 前提資料: [企画部評価](estamp-store-eval.md)。計画作成時はソース、設定、依存関係、Git を読み取っただけで、コード変更、依存取得、ビルド、Store 登録・提出は行っていない。以下の PR 名・構成・人日は実施案であり、人日はすべて見積もり。
 
 ## 1. 方針と今回の公開範囲
@@ -35,7 +35,7 @@
 | 権限 | `api-all`、`allowlist.all = true`、`csp = null` | v2 の capabilities と本番 CSP を設計し直す |
 | ライセンス・メタデータ | Cargo の `license` は空欄、著者は `you`、version は 0.0.0、LICENSE はない | MIT と権利者の明記、発行元・製品情報・版番号を整える |
 
-主な根拠: [Cargo.toml](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.toml:1)、[Cargo.lock](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.lock:2909)、[yarn.lock](/Users/tyaromax/development/tauri/estamp/yarn.lock:173)、[App.svelte](/Users/tyaromax/development/tauri/estamp/src/App.svelte:22)、[main.rs](/Users/tyaromax/development/tauri/estamp/src-tauri/src/main.rs:36)、[tauri.conf.json](/Users/tyaromax/development/tauri/estamp/src-tauri/tauri.conf.json:13)。
+主な根拠（作成時コミット `8599f0e` のリポジトリ相対パス・当時の行番号）: `src-tauri/Cargo.toml:1`、`src-tauri/Cargo.lock:2909`、`yarn.lock:173`、`src/App.svelte:22`、`src-tauri/src/main.rs:36`、`src-tauri/tauri.conf.json:13`。
 
 ## 3. 先に決める論点と推奨判断
 
@@ -45,7 +45,7 @@
 | 製品の位置付け | 決定済み: 画像の日付印を作る無料 MIT アプリ。広告・アプリ内課金・試用期限なし。本人確認・電子署名・改ざん防止の機能はうたわない | 企画／PR-00 決定済み |
 | 発行元と識別情報 | 表示名 Banto Works と `Copyright (c) 2026 Banto Works` は暫定採用、本体 MIT。Tauri identifier は `jp.tyaro.estamp` に確定。MSIX Identity Name／Publisher は未取得で、公開方針のプレースホルダと転記手順で管理 | セキュリティ・リリース／PR-00 記録済み、Store 正式値は PR-07 正式 MSIX 受け入れ前 |
 | 公開する環境 | 決定済み: 初回は Windows 11 x64、日本語。最低 OS ビルドは PR-07・08 で検証し確定。Windows 10・ARM64・英語・S モードは今回対応を保証しない | 企画・品質／PR-00 決定済み |
-| 設定と旧版互換 | PR-00 で `src-tauri/Setting.json` の実物と既存 schema を確認し公開方針に記録。`app_config_dir()` への変更と明示的インポートは PR-02。別配布版との自動移行は約束しない | 基準確認は PR-00 記録済み、実装は開発／PR-02 |
+| 設定と旧版互換 | PR-00 で開発用 `src-tauri/Setting.json` を schema の参照用サンプルとして確認し公開方針に記録。利用者環境の実物・実際の保存場所は未確認。`app_config_dir()` への変更と明示的インポートは PR-02。別配布版との自動移行は約束しない | 基準確認は PR-00 記録済み、実装は開発／PR-02 |
 | ポータブル版 | 決定済み: 初回の新規成果物には含めない。既存配布物の所在・入手経路は未確認で本人からの情報待ち。判明したら旧版として案内し、追加対応は別 PR | 開発・企画／PR-00 決定済み |
 | 和暦の仕様 | デザイン仕様で確定済みの元号・受付範囲に従う。内部では時刻を持たない年月日とし、元号境界・範囲外を検証する | 企画・開発・デザイン／仕様確定済み、実装は PR-04 |
 | 手入力の仕様 | デザイン仕様を優先し、和暦直接入力を初回に含める（受付形式・正規化・検証は同仕様 §3）。任意文字列の印字は範囲外 | 企画・デザイン／仕様確定済み、実装は PR-04 |
@@ -76,7 +76,7 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 - **担当:** 開発、企画、セキュリティ・リリース。
 - **受け入れ条件:** 対象コミット、無料・課金なし・MIT、対応 OS、機能範囲、正式 identifier、発行元表示名と Store 割当値を記録。Store 割当待ちなら未確定値を明示し、正式 MSIX の受け入れ前に解消する。MIT 本文をリポジトリと配布物へ含める方針が決まる。
 
-2026-10-29 実施記録: [公開方針](estamp-release-policy.md)・ルート `LICENSE`・製品メタデータに反映。ユーザー指定により Banto Works／2026 の暫定権利表記を採用し、公開前の本人最終確認を残す。開発版は既存 Tauri に合わせ `0.0.1` に統一。MIT 原本を Tauri 配布資源とし、MSIX staging への収集は PR-07、最終配布物の確認は PR-08。Store 割当値は未取得のまま明示し、アカウント確認・名前予約・転記はユーザー作業として [実装結果](../../outputs/pr00-final1.md) に引き継ぐ。
+2026-10-29 実施記録: [公開方針](estamp-release-policy.md)・ルート `LICENSE`・製品メタデータに反映。ユーザー指定により Banto Works／2026 の暫定権利表記を採用し、公開前の本人最終確認を残す。開発版は既存 Tauri に合わせ `0.0.1` に統一。MIT 原本を Tauri 配布資源とし、MSIX staging への収集は PR-07、最終配布物の確認は PR-08。Store 割当値は未取得のまま明示し、アカウント確認・名前予約・転記は [公開方針のユーザー作業一覧](estamp-release-policy.md#ユーザー担当部門の作業未実施) に引き継ぐ。初回実装時の検証要約も同文書に記録する。
 
 ### PR-01：Tauri v2 と Windows 開発基盤への移行（1〜2 人日）
 
@@ -95,7 +95,7 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 - **依存関係:** PR-00・01。PR-04 の日付仕様を schema 確定前に共有する。
 - **担当:** 開発。品質部と保存・復旧ケースを合意。
 - **受け入れ条件:** 初回はフォルダーを作成して既定値で起動し、編集後に再起動して復元できる。保存は同じディレクトリの一時ファイルから置換し、Windows で既存ファイルの置換が成功することを確認。壊れた JSON は退避・案内し、不明な新しい schema は勝手に上書きしない。書込み失敗を利用者へ表示し、ユーザー分離と二重起動時の保存競合を処理方針込みで確認。フロントから任意パスを書かせない。
-- **旧版対応:** PR-00 で確認した `src-tauri/Setting.json` の実物と既存 schema（公開方針に記録）を対象に、初回だけの明示的インポートを実装する。既存の新設定を優先し、旧ファイルを削除しない。別配布版の所在・設定形式は未確認。後日判明した別形式の移行 UI は追加見積もりとし、CWD の任意ファイルを自動走査しない。
+- **旧版対応:** PR-00 で確認した開発用 `src-tauri/Setting.json` は schema の参照用サンプル（公開方針に記録）として使い、初回だけの明示的インポートを実装する。利用者環境の旧設定の実物・実際の保存場所は未確認で、起動時の CWD に依存する。既存の新設定を優先し、旧ファイルを削除しない。別配布版の所在・設定形式も未確認。後日判明した別形式の移行 UI は追加見積もりとし、CWD の任意ファイルを自動走査しない。
 
 ### PR-03：書体の同梱と第三者ライセンス表示（0.5 人日）
 
