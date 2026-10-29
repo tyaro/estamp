@@ -1,6 +1,8 @@
 import { writable } from 'svelte/store';
 
 export type Setting = {
+	// Keep future JSON fields when spreading settings into a save snapshot.
+	[key: string]: unknown,
 	schema_version: number,
 	top_str:string,
 	top_font_size:number,
@@ -11,7 +13,7 @@ export type Setting = {
 	date_mode: "auto" | "manual",
 	date_format: "gregorian" | "wareki",
 	manual_date: string | null,
-	stamp_type: "dated_stamp",
+	stamp_type: string,
 }
 
 export type LoadedSettings = {

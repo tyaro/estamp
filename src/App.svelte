@@ -11,6 +11,8 @@
   let ready = false;
   let revision: string | null = null;
   let storageMessage = '';
+  let legacyAvailable = false;
+  let confirmingImport = false;
 
   const applyLoaded = (result: LoadedSettings) => {
     $settings = result.settings;
@@ -34,6 +36,16 @@
     }
   };
 
+  const refreshLegacy = async () => {
+    legacyAvailable = false;
+    confirmingImport = false;
+    try {
+      legacyAvailable = await invoke<boolean>("legacy_available");
+    } catch (error) {
+      storageMessage += ` △ 旧設定の有無を確認できませんでした：${String(error)}`;
+    }
+  };
+
   const load = async () => {
     busy = true;
     try {
@@ -42,19 +54,21 @@
       ready = false;
       storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
     } finally {
+      await refreshLegacy();
       busy = false;
     }
   };
 
   const importLegacy = async () => {
-    if (busy || !ready || revision !== null) return;
+    if (busy || !ready || !legacyAvailable || !confirmingImport) return;
     busy = true;
     try {
-      applyLoaded(await invoke<LoadedSettings>("import_legacy"));
+      applyLoaded(await invoke<LoadedSettings>("import_legacy", { revision }));
       toast.success("旧設定を取り込みました", { position: "top-center" });
     } catch (error) {
       storageMessage = `× 旧設定を取り込めませんでした：${String(error)}`;
     } finally {
+      await refreshLegacy();
       busy = false;
     }
   };
@@ -175,9 +189,14 @@
 </div>
 <div class="storage-actions">
   <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
-  {#if ready && revision === null}
-    <button disabled={busy} on:click={importLegacy}>旧設定を取り込む</button>
-    <p>初回のみ、実行ファイルと同じフォルダーの Setting.json を取り込みます。</p>
+  {#if ready && legacyAvailable}
+    <button disabled={busy} on:click={() => confirmingImport = true}>旧設定を取り込む</button>
+    <p>実行ファイルと同じフォルダーの Setting.json が見つかりました。保存後も取り込めます。</p>
+    {#if confirmingImport}
+      <p role="alert">保存済みの設定と編集中の値を旧設定で置き換えます。取り込みますか？ 元の旧ファイルは残ります。</p>
+      <button disabled={busy} on:click={importLegacy}>置き換えて取り込む</button>
+      <button disabled={busy} on:click={() => confirmingImport = false}>キャンセル</button>
+    {/if}
   {/if}
 </div>
 

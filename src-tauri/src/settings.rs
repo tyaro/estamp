@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -28,15 +30,36 @@ pub enum DateFormat {
     Wareki,
 }
 
-// Additional stamp styles will be introduced in v1.1/v1.2, without a control here.
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+// Unknown styles use the existing dated-stamp rendering, but retain their wire value.
+// Keep this lossless when adding styles; no style control is exposed in this PR.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub enum StampType {
     #[default]
     DatedStamp,
+    Unknown(String),
+}
+
+impl From<String> for StampType {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "dated_stamp" => Self::DatedStamp,
+            _ => Self::Unknown(value),
+        }
+    }
+}
+
+impl From<StampType> for String {
+    fn from(value: StampType) -> Self {
+        match value {
+            StampType::DatedStamp => "dated_stamp".to_string(),
+            StampType::Unknown(value) => value,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     #[serde(default = "schema_version")]
     pub schema_version: u32,
@@ -54,6 +77,9 @@ pub struct Settings {
     pub manual_date: Option<String>,
     #[serde(default)]
     pub stamp_type: StampType,
+    // Preserve future fields through load -> IPC -> save, including nested values.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -70,6 +96,7 @@ impl Default for Settings {
             date_format: DateFormat::default(),
             manual_date: None,
             stamp_type: StampType::default(),
+            extra: BTreeMap::new(),
         }
     }
 }
@@ -97,7 +124,8 @@ impl DecodeError {
 }
 
 fn decode(bytes: &[u8]) -> Result<Settings, DecodeError> {
-    let value: serde_json::Value = serde_json::from_slice(bytes)
+    let json = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let value: serde_json::Value = serde_json::from_slice(json)
         .map_err(|error| DecodeError::Corrupt(format!("設定の JSON が壊れています：{error}")))?;
     // Check the version before attempting to deserialize fields unknown to this build.
     if let Some(version) = value.get("schema_version") {
@@ -135,7 +163,11 @@ impl SettingsStore {
             .write(true)
             .open(self.directory.join("Setting.lock"))
             .map_err(|error| format!("設定のロックを開けません：{error}"))?;
-        lock.try_lock().map_err(|error| {
+        retry(
+            || lock.try_lock(),
+            |error| matches!(error, std::fs::TryLockError::WouldBlock),
+        )
+        .map_err(|error| {
             format!("設定を使用中です。他の操作が終わってから再試行してください：{error}")
         })?;
         Ok(lock)
@@ -159,7 +191,7 @@ impl SettingsStore {
             Err(DecodeError::Unsupported(message)) => Err(message),
             Err(DecodeError::Corrupt(message)) => {
                 let backup = unique_path(&self.directory, "corrupt.json");
-                fs::rename(self.path(), &backup).map_err(|error| {
+                rename_with_retry(&self.path(), &backup).map_err(|error| {
                     format!("{message}。退避できないため読込を中止しました：{error}")
                 })?;
                 Ok(LoadedSettings {
@@ -176,22 +208,29 @@ impl SettingsStore {
 
     pub fn save(&self, config: &Settings, revision: Option<&str>) -> Result<String, String> {
         let _lock = self.lock()?;
+        self.check_revision(revision)?;
+        self.write(config)
+    }
+
+    fn check_revision(&self, revision: Option<&str>) -> Result<(), String> {
         let current = read_optional(&self.path())?;
-        // Even if called without a successful load, never overwrite unsupported/corrupt data.
+        // Import and save both protect unsupported/corrupt destination data.
         if let Some(bytes) = &current {
             decode(bytes).map_err(DecodeError::message)?;
         }
         if current.as_deref() != revision.map(str::as_bytes) {
             return Err("別のウィンドウで設定が更新されました。再読込してから保存してください（編集中の値は再読込で置き換わります）。".to_string());
         }
-        self.write(config)
+        Ok(())
     }
 
-    pub fn import_legacy(&self, source: &Path) -> Result<LoadedSettings, String> {
+    pub fn import_legacy(
+        &self,
+        source: &Path,
+        revision: Option<&str>,
+    ) -> Result<LoadedSettings, String> {
         let _lock = self.lock()?;
-        if read_optional(&self.path())?.is_some() {
-            return Err("保存済みの新設定を優先するため、旧設定は取り込みません。".to_string());
-        }
+        self.check_revision(revision)?;
         let bytes = fs::read(source).map_err(|error| {
             format!("実行ファイルと同じフォルダーの旧 Setting.json を読めません：{error}")
         })?;
@@ -224,9 +263,40 @@ impl SettingsStore {
         // Close before rename, including on Windows. std::fs::rename replaces existing files.
         drop(file);
         written.map_err(|error| format!("設定を書き込めません：{error}"))?;
-        fs::rename(&temporary.0, self.path())
+        rename_with_retry(&temporary.0, &self.path())
             .map_err(|error| format!("設定ファイルを置き換えられません：{error}"))?;
         Ok(json)
+    }
+}
+
+// Bound synchronous IPC waiting to 300 ms; do not retry permanent failures.
+fn retry<T, E>(
+    mut operation: impl FnMut() -> Result<T, E>,
+    transient: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+    let deadline = Instant::now() + Duration::from_millis(300);
+    loop {
+        match operation() {
+            Err(error) if transient(&error) && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn rename_with_retry(source: &Path, destination: &Path) -> io::Result<()> {
+    retry(
+        || fs::rename(source, destination),
+        |error| cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33)),
+    )
+}
+
+pub fn legacy_available(source: &Path) -> Result<bool, String> {
+    match fs::metadata(source) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("旧 Setting.json の存在を確認できません：{error}")),
     }
 }
 
@@ -263,6 +333,12 @@ impl Drop for TemporaryFile {
 mod tests {
     use super::*;
 
+    const LEGACY_JSON: &[u8] = r#"{
+        "top_str":"所属", "top_font_size":90, "mid_font_size":60,
+        "btm_str":"名前", "btm_font_size":110, "output_size":50
+    }"#
+    .as_bytes();
+
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
@@ -284,10 +360,140 @@ mod tests {
     }
 
     #[test]
+    fn unknown_stamp_and_fields_survive_load_ipc_edit_and_save() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        fs::create_dir_all(&store.directory).unwrap();
+        let mut future = serde_json::to_value(Settings::default()).unwrap();
+        future["stamp_type"] = serde_json::json!("future_角印");
+        future["future_options"] = serde_json::json!({"nested": [true, null, "値"]});
+        let original = serde_json::to_vec(&future).unwrap();
+        fs::write(store.path(), &original).unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(
+            loaded.settings.stamp_type,
+            StampType::Unknown("future_角印".into())
+        );
+        assert!(loaded.warning.is_none());
+        assert_eq!(fs::read(store.path()).unwrap(), original);
+        // Match the frontend IPC round trip, including its settings snapshot.
+        let ipc = serde_json::to_value(&loaded.settings).unwrap();
+        let mut edited: Settings = serde_json::from_value(ipc).unwrap();
+        edited.top_str = "編集済み".into();
+        store.save(&edited, loaded.revision.as_deref()).unwrap();
+        future["top_str"] = serde_json::json!("編集済み");
+        assert_eq!(
+            serde_json::to_value(store.load().unwrap().settings).unwrap(),
+            future
+        );
+        assert_eq!(fs::read_dir(&store.directory).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn bom_json_load_and_import_keep_source_and_revision_bytes() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        fs::create_dir_all(&store.directory).unwrap();
+        let bytes = [b"\xef\xbb\xbf".as_slice(), LEGACY_JSON].concat();
+        fs::write(store.path(), &bytes).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(loaded.warning.is_none());
+        assert_eq!(loaded.revision.as_deref().unwrap().as_bytes(), bytes);
+        assert_eq!(fs::read(store.path()).unwrap(), bytes);
+        let revision = store
+            .save(&loaded.settings, loaded.revision.as_deref())
+            .unwrap();
+        let source = directory.0.join("Setting.json");
+        fs::write(&source, &bytes).unwrap();
+        assert_eq!(
+            store
+                .import_legacy(&source, Some(&revision))
+                .unwrap()
+                .settings,
+            loaded.settings
+        );
+        assert_eq!(fs::read(source).unwrap(), bytes);
+    }
+
+    #[test]
+    fn missing_fields_keep_present_values_but_wrong_types_are_corrupt() {
+        let partial = decode(br#"{"top_str":"custom","output_size":42}"#)
+            .unwrap_or_else(|e| panic!("{}", e.message()));
+        assert_eq!(partial.top_str, "custom");
+        assert_eq!(partial.output_size, 42);
+        assert_eq!(partial.btm_font_size, Settings::default().btm_font_size);
+        assert_eq!(partial.stamp_type, StampType::DatedStamp);
+        assert!(matches!(
+            decode(br#"{"stamp_type":42}"#),
+            Err(DecodeError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_presence_requires_a_file_and_is_independent_of_first_save() {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("Setting.json");
+        assert!(!legacy_available(&source).unwrap());
+        fs::create_dir(&source).unwrap();
+        assert!(!legacy_available(&source).unwrap());
+        fs::remove_dir(&source).unwrap();
+        fs::write(&source, LEGACY_JSON).unwrap();
+        assert!(legacy_available(&source).unwrap());
+        directory.store().save(&Settings::default(), None).unwrap();
+        assert!(legacy_available(&source).unwrap());
+        fs::remove_file(source).unwrap();
+        assert!(!legacy_available(&directory.0.join("Setting.json")).unwrap());
+    }
+
+    #[test]
+    fn transient_retry_succeeds_and_permanent_errors_fail_immediately() {
+        let mut calls = 0;
+        let result = retry(
+            || {
+                calls += 1;
+                if calls < 3 {
+                    Err("busy")
+                } else {
+                    Ok(42)
+                }
+            },
+            |error| *error == "busy",
+        );
+        assert_eq!(result, Ok(42));
+        assert_eq!(calls, 3);
+        let mut calls = 0;
+        assert_eq!(
+            retry::<(), _>(
+                || {
+                    calls += 1;
+                    Err("permanent")
+                },
+                |_| false
+            ),
+            Err("permanent")
+        );
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn short_lock_contention_is_waited_out() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        let lock = store.lock().unwrap();
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(60));
+            drop(lock);
+        });
+        let loaded = store.load().unwrap();
+        release.join().unwrap();
+        assert_eq!(loaded.settings, Settings::default());
+    }
+
+    #[test]
     fn first_load_creates_directory_with_defaults_without_importing() {
         let directory = TestDirectory::new();
         let source = directory.0.join("Setting.json");
-        fs::write(&source, include_bytes!("../Setting.json")).unwrap();
+        fs::write(&source, LEGACY_JSON).unwrap();
         let store = directory.store();
         let loaded = store.load().unwrap();
         assert_eq!(loaded.settings, Settings::default());
@@ -303,7 +509,7 @@ mod tests {
         let directory = TestDirectory::new();
         let store = directory.store();
         fs::create_dir_all(&store.directory).unwrap();
-        let original = include_bytes!("../Setting.json");
+        let original = LEGACY_JSON;
         fs::write(store.path(), original).unwrap();
         // Exercise the actual file load, not just serde deserialization.
         let loaded = store.load().unwrap();
@@ -485,24 +691,41 @@ mod tests {
     }
 
     #[test]
-    fn explicit_import_preserves_source_and_never_overwrites_new_settings() {
+    fn explicit_import_works_after_save_and_preserves_source() {
         let directory = TestDirectory::new();
         let store = directory.store();
         let source = directory.0.join("Setting.json");
-        let original = include_bytes!("../Setting.json");
-        fs::write(&source, original).unwrap();
-        let imported = store.import_legacy(&source).unwrap();
+        fs::write(&source, LEGACY_JSON).unwrap();
+        let imported = store.import_legacy(&source, None).unwrap();
+        assert_eq!(imported.settings.top_font_size, 90);
+        let saved = store
+            .save(&Settings::default(), imported.revision.as_deref())
+            .unwrap();
+        let imported = store.import_legacy(&source, Some(&saved)).unwrap();
+        assert_eq!(store.load().unwrap().settings, imported.settings);
         assert_eq!(imported.settings.stamp_type, StampType::DatedStamp);
         assert_eq!(imported.settings.top_font_size, 90);
-        assert_eq!(store.load().unwrap().settings, imported.settings);
-        assert_eq!(fs::read(&source).unwrap(), original);
-        let saved = fs::read(store.path()).unwrap();
+        assert_eq!(fs::read(source).unwrap(), LEGACY_JSON);
+    }
+
+    #[test]
+    fn import_rejects_stale_revision_and_protects_unsupported_destination() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        let source = directory.0.join("Setting.json");
+        fs::write(&source, LEGACY_JSON).unwrap();
+        let saved = store.save(&Settings::default(), None).unwrap();
         assert!(store
-            .import_legacy(&source)
+            .import_legacy(&source, None)
             .unwrap_err()
-            .contains("新設定を優先"));
-        assert_eq!(fs::read(store.path()).unwrap(), saved);
-        assert_eq!(fs::read(source).unwrap(), original);
+            .contains("更新されました"));
+        assert_eq!(fs::read_to_string(store.path()).unwrap(), saved);
+        for bytes in ["{", r#"{"schema_version":999}"#] {
+            fs::write(store.path(), bytes).unwrap();
+            assert!(store.import_legacy(&source, Some(bytes)).is_err());
+            assert_eq!(fs::read_to_string(store.path()).unwrap(), bytes);
+        }
+        assert_eq!(fs::read(source).unwrap(), LEGACY_JSON);
     }
 
     #[test]
@@ -510,10 +733,10 @@ mod tests {
         let directory = TestDirectory::new();
         let store = directory.store();
         let source = directory.0.join("Setting.json");
-        assert!(store.import_legacy(&source).is_err());
+        assert!(store.import_legacy(&source, None).is_err());
         for bytes in ["{", r#"{"schema_version":999}"#] {
             fs::write(&source, bytes).unwrap();
-            assert!(store.import_legacy(&source).is_err());
+            assert!(store.import_legacy(&source, None).is_err());
             assert_eq!(fs::read_to_string(&source).unwrap(), bytes);
             assert!(!store.path().exists());
         }

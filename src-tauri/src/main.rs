@@ -28,20 +28,37 @@ fn save(
     settings_store(&app)?.save(&config, revision.as_deref())
 }
 
-#[tauri::command]
-fn import_legacy(app: tauri::AppHandle) -> Result<LoadedSettings, String> {
-    // Explicit import only. Never search the CWD or accept a path from the frontend.
+fn legacy_path() -> Result<std::path::PathBuf, String> {
+    // Review scope: executable-adjacent file only, independent of shortcut/development CWD.
     let executable = std::env::current_exe()
         .map_err(|error| format!("旧設定の場所を取得できません：{error}"))?;
     let directory = executable
         .parent()
         .ok_or("実行ファイルの場所を取得できません")?;
-    settings_store(&app)?.import_legacy(&directory.join("Setting.json"))
+    Ok(directory.join("Setting.json"))
+}
+
+#[tauri::command]
+fn legacy_available() -> Result<bool, String> {
+    settings::legacy_available(&legacy_path()?)
+}
+
+#[tauri::command]
+fn import_legacy(
+    app: tauri::AppHandle,
+    revision: Option<String>,
+) -> Result<LoadedSettings, String> {
+    settings_store(&app)?.import_legacy(&legacy_path()?, revision.as_deref())
 }
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save, load, import_legacy])
+        .invoke_handler(tauri::generate_handler![
+            save,
+            load,
+            import_legacy,
+            legacy_available
+        ])
         .plugin(tauri_plugin_clipboard_manager::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

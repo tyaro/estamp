@@ -2,9 +2,9 @@
 
 作成日: 2026-10-22（JST）／発行元表示名: **Banto Works**
 
-2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。最新の実装・検証は [PR-01 第5回結果](../../outputs/pr01-final5.md) を参照。
+2026-10-29 PR-01 レビュー修正追記: Tauri identifier は **`jp.tyaro.estamp`** に確定。下記の現状調査は作成時点の履歴として残す。MSIX Identity / Publisher の Store 割当値は PR-07 で別途確定する。最新の実装・検証は [開発と検証](../development.md) を参照。
 
-対象: `/Users/tyaromax/development/tauri/estamp`、確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
+対象: 本リポジトリ、確認した HEAD: `8599f0ec2c32b65167726a4e938c0896c141285b`。
 前提資料: [企画部評価](estamp-store-eval.md)。本作業ではソース、設定、依存関係、Git を読み取っただけで、コード変更、依存取得、ビルド、Store 登録・提出は行っていない。以下の PR 名・構成・人日は実施案であり、人日はすべて見積もり。
 
 ## 1. 方針と今回の公開範囲
@@ -33,7 +33,7 @@
 | 権限 | `api-all`、`allowlist.all = true`、`csp = null` | v2 の capabilities と本番 CSP を設計し直す |
 | ライセンス・メタデータ | Cargo の `license` は空欄、著者は `you`、version は 0.0.0、LICENSE はない | MIT と権利者の明記、発行元・製品情報・版番号を整える |
 
-主な根拠: [Cargo.toml](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.toml:1)、[Cargo.lock](/Users/tyaromax/development/tauri/estamp/src-tauri/Cargo.lock:2909)、[yarn.lock](/Users/tyaromax/development/tauri/estamp/yarn.lock:173)、[App.svelte](/Users/tyaromax/development/tauri/estamp/src/App.svelte:22)、[main.rs](/Users/tyaromax/development/tauri/estamp/src-tauri/src/main.rs:36)、[tauri.conf.json](/Users/tyaromax/development/tauri/estamp/src-tauri/tauri.conf.json:13)。
+主な根拠: [Cargo.toml](../../src-tauri/Cargo.toml)、[Cargo.lock](../../src-tauri/Cargo.lock)、[yarn.lock](../../yarn.lock)、[App.svelte](../../src/App.svelte)、[main.rs](../../src-tauri/src/main.rs)、[tauri.conf.json](../../src-tauri/tauri.conf.json)。
 
 ## 3. 先に決める論点と推奨判断
 
@@ -43,7 +43,7 @@
 | 製品の位置付け | 画像の日付印を作る無料 MIT アプリ。本人確認・電子署名・改ざん防止の機能はうたわない | 企画／PR-00 |
 | 発行元と識別情報 | 表示名は Banto Works。Tauri identifier は管理できる名前空間で確定。MSIX の Identity Name／Publisher は Partner Center の値を転記 | セキュリティ・リリース／PR-00 |
 | 公開する環境 | 初回は Windows 11 x64、日本語。ARM64 等は追加ビルドとテスト費用を確認してから | 企画・品質／PR-00 |
-| 設定と旧版互換 | `app_config_dir()` を標準保存先にし、ユーザー単位に分離。PR-02 で現行 `src-tauri/Setting.json` の6項目を確認。実行ファイル隣の同形式を明示的に取り込む。新設定優先・旧ファイル保持・CWD 自動走査なし | 開発／PR-02 前（PR-02 で確定） |
+| 設定と旧版互換 | `app_config_dir()` を標準保存先にし、ユーザー単位に分離。PR-02 で現行 `src-tauri/Setting.json` の6項目を確認。実行ファイル隣の同形式を明示的に取り込む。保存後も確認付きで取込可能・旧ファイル保持・CWD 自動走査なし | 開発／PR-02 前（PR-02 で確定） |
 | ポータブル版 | 初回の新規成果物には含めない。既存配布物がある場合は入手経路を残し、旧版として案内。要望を集めて別 PR で再開 | 開発・企画／PR-00 |
 | 和暦の仕様 | 保存値は日付のみの西暦年月日、表示は西暦／和暦。和暦は明治以降の対応範囲を決め、境界を検証。範囲外を誤変換せず案内 | 企画・開発・デザイン／PR-04 前 |
 | 手入力の仕様 | 初回は西暦の年月日入力を基本とし、和暦表示へ変換。和暦文字列の直接解析・任意文字列の印字は範囲外 | 企画・デザイン／PR-04 前 |
@@ -90,17 +90,19 @@ PR-00〜09 は無料公開の必須作業。担当が複数のものは、開発
 - **依存関係:** PR-00・01。PR-04 の日付仕様を schema 確定前に共有する。
 - **担当:** 開発。品質部と保存・復旧ケースを合意。
 - **受け入れ条件:** 初回はフォルダーを作成して既定値で起動し、編集後に再起動して復元できる。保存は同じディレクトリの一時ファイルから置換し、Windows で既存ファイルの置換が成功することを確認。壊れた JSON は退避・案内し、不明な新しい schema は勝手に上書きしない。書込み失敗を利用者へ表示し、ユーザー分離と二重起動時の保存競合を処理方針込みで確認。フロントから任意パスを書かせない。
-- **旧版対応:** 既存設定があれば、PR-00 で入手した実物と schema を対象に、初回だけの明示的インポートを実装する。既存の新設定を優先し、旧ファイルを削除しない。現 HEAD のみなら移行元は「なし」。後日判明した別形式の移行 UI は追加見積もりとし、CWD の任意ファイルを自動走査しない。
+- **旧版対応:** 既存設定があれば、PR-00 で入手した実物と schema を対象に、保存後も利用できる確認付きの明示的インポートを実装する。競合時は停止し、旧ファイルを削除しない。現 HEAD のみなら移行元は「なし」。後日判明した別形式の移行 UI は追加見積もりとし、CWD の任意ファイルを自動走査しない。
 
-#### PR-02 実装時の確定事項（2026-10-29）
+#### PR-02 実装時の確定事項（2026-10-29、10-30 レビュー対応更新）
 
 - 保存先は `app.path().app_config_dir()/Setting.json`。現在の identifier は `jp.tyaro.estamp`。Windows の論理保存先は `%APPDATA%\jp.tyaro.estamp\Setting.json`。Mac・MSIX の実体パスを直書きせず、Rust が解決する。
-- schema version は **1**。旧6項目は必須のまま維持し、`schema_version` と日付3項目、`stamp_type` を欠く既存 JSON には既定値を補う。`stamp_type` は `#[serde(default)]`、既定値は現在の三段日付印を表す `dated_stamp`（Rust: `StampType::DatedStamp`）。この PR に印影種類の切替・UI・追加描画を含めない。日付3項目は審査中の PR-04 と同じ名前・値に合わせた保存契約だけを定義する。
+- schema version は **1**。既存 JSON の欠損項目には既定値を補い、型が不正な項目はエラーにする。`stamp_type` は `#[serde(default)]`、既定値は現在の三段日付印を表す `dated_stamp`（Rust: `StampType::DatedStamp`）。未知の印影種類は元の文字列を保持し、表示には既存の日付印を使う。未知の追加フィールドも JSON 値のまま保持する（方式 (2)）。この PR に印影種類の切替・UI・追加描画を含めない。日付3項目は審査中の PR-04 と同じ名前・値に合わせた保存契約だけを定義する。
 - 初回はフォルダーを作り既定値で起動し、利用者の保存・取込時に JSON を作成する。既定値は既存フロントに合わせ、上段「所属」80、中段60、下段「名前」80、出力100px。旧 JSON の値（90・60・110・50px）は読み込んだ値を保持する。
-- 同じフォルダーに一時ファイルを排他的に作成し、全量書込み・`sync_all()`・クローズ後に `std::fs::rename` で置換。失敗は日本語で表示し、一時ファイルを削除する。Windows の既存ファイル置換は Rust テストを既存 Windows CI で実行する。Mac の成功だけで Windows 実機確認済みとは扱わない。
-- 壊れた JSON／形式不正／不正 UTF-8 は同じフォルダーの `Setting.<識別子>.corrupt.json` に原文のまま退避し、保存場所を案内して既定値を使う。退避失敗・通常の読込失敗時は編集・保存を停止。不明な schema version は退避・上書きせず停止する。
-- `Setting.lock` の OS ファイルロックで読込・退避・競合確認・保存を直列化する。ロックファイルは削除せず、ハンドル解放でロック解除。別ウィンドウが保存した場合は読込時の内容を表す `revision` と比較して後発保存を拒否し、再読込を案内する。同時操作中は待ち続けず再試行を案内する。対象はこの保存契約を使うアプリ同士で、外部エディターによる同時書込みまではロックできない。
-- 旧形式の実物は追跡中の `src-tauri/Setting.json`。初回保存前の「旧設定を取り込む」で、**現在の実行ファイルと同じフォルダー**の `Setting.json` を読む。CWD や開発用の `src-tauri/Setting.json` を自動参照しない。新設定があれば取り込まず、旧ファイルは削除・変更しない。任意の旧版配置や別形式への対応は後続検討。起動ウィンドウの寸法は変更せず、スクロールで設定・復旧操作に到達できるようにする。
+- 同じフォルダーに一時ファイルを排他的に作成し、全量書込み・`sync_all()`・クローズ後に `std::fs::rename` で置換。Windows の一時的なアクセス拒否・共有違反・ロック違反は20ms間隔・最大300msを目安に再試行する。失敗は日本語で表示し、一時ファイルを削除する。Windows の既存ファイル置換は Rust テストを既存 Windows CI で実行する。Mac の成功だけで Windows 実機確認済みとは扱わない。
+- UTF-8 BOM は解析時だけ除去し、revision には原文を使う。壊れた JSON／形式不正／不正 UTF-8 は同じフォルダーの `Setting.<識別子>.corrupt.json` に原文のまま退避し、保存場所を案内して既定値を使う。退避失敗・通常の読込失敗時は編集・保存を停止。不明な schema version は退避・上書きせず停止する。
+- `Setting.lock` の OS ファイルロックで読込・退避・競合確認・保存を直列化する。ロックファイルは削除せず、ハンドル解放でロック解除。別ウィンドウが保存した場合は読込時の内容を表す `revision` と比較して後発保存を拒否し、再読込を案内する。ロック競合は20ms間隔・最大300msを目安に待ち、それでも取得できなければ再試行を案内する。対象はこの保存契約を使うアプリ同士で、外部エディターによる同時書込みまではロックできない。
+- 「旧設定を取り込む」は **現在の実行ファイルと同じフォルダー**の `Setting.json` が存在するときだけ表示する（`legacy_available` コマンド）。保存後も取り込めるが、保存済み・編集中の値を置き換える確認を経て、revision が一致する場合だけ保存する。CWD や開発用の `src-tauri/Setting.json` を自動参照せず、旧ファイルは削除・変更しない。別の場所にある旧設定は利用者が実行ファイル隣へコピーしてから再読込する。テストはテスト内の旧6項目データを使い、追跡中の設定ファイルに依存しない。起動ウィンドウの寸法は変更せず、スクロールで設定・復旧操作に到達できるようにする。
+
+詳細な IPC 契約・互換性の根拠・段階Bへの接続事項は [設定ストアの仕様](../settings-storage.md) を参照。
 
 ### PR-03：書体の同梱と第三者ライセンス表示（0.5 人日）
 
