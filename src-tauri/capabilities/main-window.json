@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Allow the main window to create, copy, and release stamp images.",
+  "windows": ["main"],
+  "permissions": [
+    "core:image:allow-new",
+    "clipboard-manager:allow-write-image",
+    "core:resources:allow-close"
+  ]
+}

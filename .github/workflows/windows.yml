@@ -1,0 +1,40 @@
+name: Windows
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check-test-build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Set up Rust 1.95.0
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+          rustup show active-toolchain
+          rustc --version
+      - name: Set up Yarn 1.22.22
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+          yarn --version
+      - name: Install locked frontend dependencies
+        run: yarn install --frozen-lockfile
+      - name: Check frontend types
+        run: yarn run check
+      - name: Check Rust
+        run: cargo check -j 2 --locked --manifest-path src-tauri/Cargo.toml
+      - name: Test Rust
+        run: cargo test -j 2 --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build Tauri release (includes Vite build)
+        run: node node_modules/@tauri-apps/cli/tauri.js build --no-bundle -- --locked -j 2

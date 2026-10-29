@@ -2,7 +2,9 @@
   import {Canvg} from 'canvg';
   import { settings,type Setting } from './store';
   import { onMount } from 'svelte';
-  import { invoke } from "@tauri-apps/api/tauri"
+  import { invoke } from '@tauri-apps/api/core';
+  import { Image } from '@tauri-apps/api/image';
+  import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import toast, { Toaster } from 'svelte-french-toast';
 
   const save = async() => {
@@ -24,25 +26,33 @@
 
 
   const clipboardCopy = async () => {
-    let src = document.querySelector("svg")
-    const svgText = src.outerHTML.replace(/NS[0-9]+:href/g, "xlink:href");
-    let canvas = document.createElement("canvas");
-    
-    canvas.width = src.width.baseVal.value;
-    canvas.height = src.height.baseVal.value;
-    var ctx = canvas.getContext('2d');
-    const v:Canvg = Canvg.fromString(ctx,svgText)
-    v.resize($settings.output_size,$settings.output_size,'xMidYMid meet')
-    await v.render()
-    const data:string = canvas.toDataURL("image/png")
-    canvas.toBlob(async(blob)=>{
-      const item = new ClipboardItem({'image/png':blob})
-      await navigator.clipboard.write([item]).catch((e)=>console.log("error",e));
-    })
-    toast.success("copy!!",{position:"bottom-center"})
+    try {
+      const src = document.querySelector<SVGSVGElement>('#stamp');
+      if (!src) throw new Error('印影が見つかりません');
+      const svgText = src.outerHTML.replace(/NS[0-9]+:href/g, 'xlink:href');
+      const canvas = document.createElement('canvas');
+      canvas.width = src.width.baseVal.value;
+      canvas.height = src.height.baseVal.value;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('画像を作成できません');
+      const v = Canvg.fromString(ctx, svgText);
+      v.resize($settings.output_size, $settings.output_size, 'xMidYMid meet');
+      await v.render();
+      const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const image = await Image.new(new Uint8Array(data), width, height);
+      try {
+        await writeImage(image);
+      } finally {
+        await image.close();
+      }
+      toast.success('copy!!', { position: 'bottom-center' });
+    } catch (error) {
+      console.error('画像コピーに失敗しました', error);
+      toast.error('画像コピーに失敗しました', { position: 'bottom-center' });
+    }
   };
   const today = new Date()
-  let str_date:String = today.getFullYear() + "." 
+  let str_date:string = today.getFullYear() + "."
               + ("00"+String(today.getMonth()+1)).slice(-2) +"."
               + ("00"+today.getDate()).slice(-2);
 
