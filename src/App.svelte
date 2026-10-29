@@ -1,6 +1,6 @@
 <script lang="ts">
   import {Canvg} from 'canvg';
-  import { settings,type Setting } from './store';
+  import { settings,type LoadedSettings } from './store';
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { Image } from '@tauri-apps/api/image';
@@ -19,33 +19,85 @@
     dateState = editDate(dateState, (event.currentTarget as HTMLInputElement).value);
   };
 
+  let copying = false;
+  let disposed = false;
+  let busy = true;
+  let ready = false;
+  let revision: string | null = null;
+  let storageMessage = '';
+  let legacyAvailable = false;
+  let confirmingImport = false;
+
+  const applyLoaded = (result: LoadedSettings) => {
+    $settings = result.settings;
+    dateState = restoreDate(result.settings);
+    revision = result.revision;
+    storageMessage = result.warning ?? '';
+    ready = true;
+  };
+
   const save = async () => {
-    if (loading || dateState.error) return;
+    if (busy || !ready || dateState.error) return;
     refreshToday();
+    busy = true;
     try {
-      // Do not write the saved snapshot back over edits made while IPC is pending.
-      await saveSettings(settings, dateState, config => invoke("save", { config }));
+      // Save a snapshot; do not replace edits made while IPC is pending.
+      revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
+      storageMessage = '';
       toast.success("保存しました", { position: "top-center" });
     } catch (error) {
-      toast.error(`保存に失敗しました：${String(error)}`, { position: "top-center" });
+      storageMessage = `× 保存に失敗しました：${String(error)}`;
+    } finally {
+      busy = false;
+    }
+  };
+
+  const refreshLegacy = async () => {
+    legacyAvailable = false;
+    confirmingImport = false;
+    try {
+      legacyAvailable = await invoke<boolean>("legacy_available");
+    } catch (error) {
+      storageMessage += ` △ 旧設定の有無を確認できませんでした：${String(error)}`;
+    }
+  };
+
+  const load = async () => {
+    busy = true;
+    try {
+      const result = await invoke<LoadedSettings>("load");
+      if (disposed) return;
+      applyLoaded(result);
+    } catch (error) {
+      if (disposed) return;
+      ready = false;
+      storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
+    } finally {
+      if (!disposed) {
+        await refreshLegacy();
+        busy = false;
+      }
+    }
+  };
+
+  const importLegacy = async () => {
+    if (busy || !ready || !legacyAvailable || !confirmingImport) return;
+    busy = true;
+    try {
+      applyLoaded(await invoke<LoadedSettings>("import_legacy", { revision }));
+      toast.success("旧設定を取り込みました", { position: "top-center" });
+    } catch (error) {
+      storageMessage = `× 旧設定を取り込めませんでした：${String(error)}`;
+    } finally {
+      if (!disposed) {
+        await refreshLegacy();
+        busy = false;
+      }
     }
   };
 
   onMount(() => {
-    let disposed = false;
-    // Keep the editor inactive until loading finishes to avoid replacing a user edit.
-    void (async () => {
-      try {
-        const result: Setting = await invoke("load", {});
-        if (disposed) return;
-        $settings = { ...$settings, ...result };
-        dateState = restoreDate(result);
-      } catch (error) {
-        if (!disposed) toast.error(`設定を読み込めませんでした：${String(error)}`, { position: "top-center" });
-      } finally {
-        if (!disposed) loading = false;
-      }
-    })();
+    void load();
     const timer = window.setInterval(refreshToday, 1000);
     window.addEventListener('focus', refreshToday);
     document.addEventListener('visibilitychange', refreshToday);
@@ -56,11 +108,8 @@
       document.removeEventListener('visibilitychange', refreshToday);
     };
   });
-  let loading = true;
-  let copying = false;
-
   const clipboardCopy = async () => {
-    if (loading || copying || dateState.error) return;
+    if (busy || !ready || copying || dateState.error) return;
     copying = true;
     try {
       refreshToday();
@@ -108,8 +157,11 @@
 </script>
 <Toaster />
 <div class="app-viewport">
+{#if storageMessage}
+  <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} role="alert">{storageMessage}</p>
+{/if}
 <div class="main">
-  <button aria-label="印影をコピー" disabled={loading || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
+  <button aria-label="印影をコピー" disabled={busy || !ready || copying || !!dateState.error} on:click={()=>clipboardCopy()}>
   <svg id="stamp"  version="1.1" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400">
  
   <circle stroke="#ff0000" cx="200" cy="200" r="192" fill-opacity="0" stroke-width="16"/>
@@ -127,7 +179,7 @@
 </svg>
 </button>
 </div>
-<fieldset class="menu" disabled={loading}>
+<fieldset class="menu" disabled={busy || !ready}>
   <table>
     <tr>
       <th>位置</th>
@@ -194,8 +246,21 @@
   </table>
 </fieldset>
 <div style="display:flex;justify-content:center;margin-top:5px">
-    <button class="save" disabled={loading || !!dateState.error} on:click={save}>保存</button>
+    <button class="save" disabled={busy || !ready || !!dateState.error} on:click={save}>保存</button>
 </div>
+<div class="storage-actions">
+  <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
+  {#if ready && legacyAvailable}
+    <button disabled={busy} on:click={() => confirmingImport = true}>旧設定を取り込む</button>
+    <p>実行ファイルと同じフォルダーの Setting.json が見つかりました。保存後も取り込めます。</p>
+    {#if confirmingImport}
+      <p role="alert">保存済みの設定と編集中の値を旧設定で置き換えます。取り込みますか？ 元の旧ファイルは残ります。</p>
+      <button disabled={busy} on:click={importLegacy}>置き換えて取り込む</button>
+      <button disabled={busy} on:click={() => confirmingImport = false}>キャンセル</button>
+    {/if}
+  {/if}
+</div>
+
 </div>
 
 <style>
@@ -258,6 +323,27 @@
     padding: 0;
     min-width: 15rem;
     margin-top:5px;
+  }
+  .storage-message {
+    color: #B42318;
+    background: #F7F6F2;
+    padding: 8px;
+    margin: 0;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .storage-actions {
+    display: grid;
+    gap: 4px;
+    margin: 8px;
+    font-size: 14px;
+  }
+  .storage-warning {
+    color: #8A5700;
+  }
+  .storage-actions button {
+    min-height: 32px;
+    border-radius: 8px;
   }
 
 </style>
