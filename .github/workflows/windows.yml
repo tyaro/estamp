@@ -30,7 +30,7 @@ jobs:
           yarn --version
       - name: Install locked frontend dependencies
         run: yarn install --frozen-lockfile
-      - name: Check frontend types
+      - name: Check frontend types and date tests
         run: yarn run check
       - name: Check Rust
         run: cargo check -j 2 --locked --manifest-path src-tauri/Cargo.toml
