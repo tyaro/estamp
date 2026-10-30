@@ -122,7 +122,7 @@ test('inputs have visible Japanese labels, native tab order and visible focus', 
   ]);
   for (const input of inputs) assert.ok(elements.some(node => node.name === 'label' && literal(node, 'for') === literal(input, 'id')));
   const focusTargets = elements.filter(node => attr(node, 'tabindex'));
-  assert.deepEqual(focusTargets.map(node => [literal(node, 'id'), literal(node, 'tabindex')]), [['settings-heading', '-1']]);
+  assert.deepEqual(focusTargets.map(node => [literal(node, 'id'), literal(node, 'tabindex')]), [['copy-error', '-1'], ['settings-heading', '-1']]);
   assert.match(read('src/app.postcss'), /:focus-visible \{ outline: 2px solid var\(--focus\); outline-offset: 2px;/);
   assert.match(app, /on:compositionstart=\{\(\) => composing = true\} on:compositionend=\{finishComposition\}/);
 });
@@ -165,7 +165,7 @@ test('feedback lives inside the visible stamp box, passes clicks through and has
   assert.ok(badges.every(node => node.attributes.some(a => a.type === 'Class' && a.name === 'feedback-visible')));
   const content = node => markup.slice(node.start, node.end);
   assert.match(content(badges[0]), /copyFeedback\.startsWith\('×'\) \? '' : copyFeedback/);
-  assert.match(content(badges[1]), /copyFeedback\.startsWith\('×'\) \? copyFeedback : ''/);
+  assert.match(content(badges[1]), /\{#if copyFeedback\.startsWith\('×'\)\}\{copyFeedback\}<br>詳細（Ctrl\+,）\{\/if\}/);
   assert.match(content(badges[2]), /\{startupIssue\}/);
   assert.match(app, /\.stamp-box \{ position: relative; width: 100px; height: 100px; \}/);
   const feedbackCss = app.match(/\.stamp-feedback\s*\{([^}]+)\}/)[1];
@@ -177,11 +177,11 @@ test('feedback lives inside the visible stamp box, passes clicks through and has
   assert.doesNotMatch(feedbackCss, /display:\s*none|visibility:\s*hidden/);
   assert.doesNotMatch(app, /\.stamp-feedback:empty\s*\{[^}]*display:\s*none/);
   assert.match(app, /\.copy-feedback \{ bottom: 0; \}/);
-  assert.match(app, /\.startup-issue \{ top: 0; \}/);
-  // Both 30px badges stay in the 100px seal (y=5..105), within 120px.
+  assert.match(app, /\.startup-issue \{ top: 0; white-space: pre-line; \}/);
+  // Two-line warnings and copy failure each use 50px, within the seal y=5..105.
   assert.ok(5 + 100 <= config.app.windows[0].height);
-  assert.ok(2 * (20 + 2 * 4 + 2) < 100);
-  assert.match(app, /\{#if copyMessage\}[\s\S]*?<p class="storage-message"[\s\S]*?\{copyMessage\}<\/p>/);
+  assert.ok(2 * (2 * 20 + 2 * 4 + 2) <= 100);
+  assert.match(app, /\{#if copyMessage\}\s*<p id="copy-error" class="storage-message" tabindex="-1" bind:this=\{copyError\}[\s\S]*?\{copyMessage\}<\/p>/);
 });
 
 test('badge state colors meet 4.5:1 contrast against their opaque background', () => {

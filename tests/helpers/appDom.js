@@ -6,7 +6,7 @@ import { writable } from 'svelte/store';
 import ts from 'typescript';
 import * as dates from '../../src/date.js';
 import { saveSettings, settingsSnapshot } from '../../src/save.js';
-import { hasLongStampLine } from '../../src/stampImage.js';
+import { hasLongStampLine, validateImageSettings } from '../../src/stampImage.js';
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../../src/App.svelte', import.meta.url), 'utf8');
@@ -41,8 +41,8 @@ class Node {
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   removeAttribute(name) { this.attributes.delete(name); }
-  focus() { this.focused = true; }
-  scrollIntoView() { this.scrolled = true; }
+  focus(options) { this.focused = true; this.focusOptions = options; }
+  scrollIntoView(options) { this.scrolled = true; this.scrollOptions = options; }
   appendChild(node) { this.insertBefore(node, null); }
   insertBefore(node, anchor) {
     node.parentNode?.removeChild(node);
@@ -64,7 +64,9 @@ class Node {
   }
 }
 
-export async function mountApp(initialSettings, { persist = async config => JSON.stringify(config) } = {}) {
+export async function mountApp(initialSettings, {
+  persist = async config => JSON.stringify(config), revision = null, clipboard,
+} = {}) {
   let now = new Date(2025, 11, 31, 23, 59, 59);
   const elements = [];
   const document = new Node('#document');
@@ -79,7 +81,8 @@ export async function mountApp(initialSettings, { persist = async config => JSON
   const window = new Node('#window');
   window.setInterval = callback => { timers.push(callback); return timers.length; };
   window.clearInterval = () => {};
-  window.clearTimeout = () => {};
+  window.setTimeout = setTimeout;
+  window.clearTimeout = clearTimeout;
   window.performance = { now: () => 0 };
   const runtime = {};
   vm.runInNewContext(readFileSync(require.resolve('svelte/internal'), 'utf8'), {
@@ -102,17 +105,19 @@ export async function mountApp(initialSettings, { persist = async config => JSON
       refreshDate: state => dates.refreshDate(state, now),
     },
     './save.js': { saveSettings, settingsSnapshot },
-    // Leave the unrelated image/font boundary pending; no HTML parser is needed.
-    './fonts.js': { loadStampFonts: () => new Promise(() => {}), loadUiFonts: async () => {} },
-    './stampImage.js': { hasLongStampLine, validateImageSettings() {} },
+    // Keep fonts pending unless testing copy. Empty SVG avoids needing an HTML
+    // parser; only rasterization and Tauri are faked for those UI tests.
+    './fonts.js': { loadStampFonts: () => clipboard ? Promise.resolve() : new Promise(() => {}), loadUiFonts: async () => {} },
+    './stampImage.js': { hasLongStampLine, validateImageSettings, buildStampSvg: () => '',
+      renderStampImage: async () => ({ rgba: new Uint8Array(4), width: 1, height: 1 }) },
     './performance.js': { markPerformance() {} },
     './Licenses.svelte': { default: Licenses },
     '../package.json': { version: 'test' },
     '@tauri-apps/api/core': { invoke: async (command, args) => command === 'load'
-      ? { settings: initialSettings, revision: null, warning: null }
+      ? { settings: initialSettings, revision, warning: null }
       : command === 'save' ? persist(args.config) : false },
-    '@tauri-apps/api/image': {},
-    '@tauri-apps/plugin-clipboard-manager': {},
+    '@tauri-apps/api/image': { Image: { new: async () => ({ close: async () => {} }) } },
+    '@tauri-apps/plugin-clipboard-manager': { writeImage: clipboard },
   };
   const context = vm.createContext({
     exports: {}, document, window, requestAnimationFrame() {},
@@ -128,8 +133,10 @@ export async function mountApp(initialSettings, { persist = async config => JSON
   return {
     input: id => elements.find(node => node.id === id), settings,
     button: text => elements.find(node => node.nodeName === 'BUTTON' && node.textContent === text),
+    element: predicate => elements.find(node => node.parentNode && predicate(node)),
     tick: runtime.tick, timer: () => timers[0](),
     focus: () => window.dispatch('focus'),
+    keydown: properties => window.dispatch('keydown', { preventDefault() {}, ...properties }),
     resume: () => document.dispatch('visibilitychange'),
     advance: value => { now = value; },
     destroy: () => component.$destroy(),

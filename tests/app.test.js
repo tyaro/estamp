@@ -9,6 +9,7 @@ import { buildStampSvg, hasLongStampLine, validateImageSettings } from '../src/s
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
 import { mountApp } from './helpers/appDom.js';
+import { bundledStampMetrics } from './helpers/fontMetrics.js';
 
 // Execute the production App handlers, including their post-await code. Only the
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
@@ -262,6 +263,163 @@ test('long text warnings leave save and copy enabled', async () => {
   await ui.save(); await ui.copy();
   assert.equal(ui.events.sent.length, 1);
   assert.equal(ui.events.writes.length, 1);
+});
+
+test('closed settings expose unsaved edits and date/size errors, then clear on revert or save', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {} });
+  try {
+    const badge = ui.element(node => node.getAttribute('class')?.split(' ').includes('startup-issue'));
+    const copy = ui.element(node => node.getAttribute('aria-label') === '印影をコピー');
+    const panel = ui.input('settings-heading').parentNode.parentNode;
+    const open = async () => { ui.keydown({ key: ',', ctrlKey: true }); await ui.tick(); };
+    const close = async () => { ui.keydown({ key: 'Escape' }); await ui.tick(); assert.equal(panel.hidden, true); };
+    assert.equal(badge.textContent, '');
+    assert.equal(copy.disabled, false);
+    await open();
+    ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Ctrl+,）');
+    assert.equal(copy.disabled, false, 'unsaved valid edits still allow copy');
+    await open();
+    const date = ui.input('date-input');
+    date.nativeValue = 'R7.2.29'; date.dispatch('input');
+    await close();
+    assert.equal(badge.textContent, '× 入力エラー\n（Ctrl+,）');
+    assert.equal(copy.disabled, true);
+    assert.equal(date.value, 'R7.2.29');
+    await open();
+    ui.button('今日に戻す').dispatch('click');
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Ctrl+,）');
+    for (const id of ['top-size', 'date-size', 'bottom-size', 'output-size']) {
+      await open();
+      const input = ui.input(id), before = input.value;
+      input.nativeValue = '0'; input.dispatch('input');
+      await close();
+      assert.equal(badge.textContent, '× 入力エラー\n（Ctrl+,）', id);
+      assert.equal(copy.disabled, true, id);
+      await open();
+      input.nativeValue = before; input.dispatch('input');
+      await close();
+      assert.equal(badge.textContent, '△ 変更未保存\n（Ctrl+,）', id);
+      assert.equal(copy.disabled, false, id);
+    }
+    ui.settings.update(value => ({ ...value, top_str: '所属' }));
+    await ui.tick();
+    assert.equal(badge.textContent, '', 'reverting to saved settings clears the warning');
+    await open();
+    date.nativeValue = 'R7.10.22'; date.dispatch('input');
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Ctrl+,）', 'a valid date edit is also unsaved');
+    await open();
+    ui.button('今日に戻す').dispatch('click');
+    await close();
+    assert.equal(badge.textContent, '');
+    await open();
+    ui.settings.update(value => ({ ...value, btm_str: '田中' }));
+    await ui.tick();
+    ui.button('保存').dispatch('click');
+    await new Promise(setImmediate);
+    await close();
+    assert.equal(badge.textContent, '', 'successful save clears the warning');
+  } finally { ui.destroy(); }
+});
+
+test('startup issue prioritizes errors over first save, and first save over unsaved edits', async () => {
+  const ui = app({ pause: '' });
+  await ui.load();
+  ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+  ui.run('closeSettings()');
+  await ui.flush();
+  assert.equal(ui.run('settingsUnsaved && dirty'), true);
+  assert.equal(ui.run('startupIssue'), '', 'existing below-seal first-save guidance is sufficient');
+  ui.edit('R7.2.29');
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 入力エラー\n（Ctrl+,）');
+  ui.run("storageMessage = '× 保存に失敗しました'");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 設定エラー');
+  ui.run("fontMessage = '× 書体を読み込めません'");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 書体エラー');
+  ui.run("fontMessage = ''; storageMessage = ''; resetDate()");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '');
+  await ui.save();
+  ui.settings.update(value => ({ ...value, top_str: '開発部' }));
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 変更未保存\n（Ctrl+,）');
+  await ui.copy();
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 変更未保存\n（Ctrl+,）', 'successful copy does not hide unsaved edits');
+});
+
+for (const entry of ['shortcut', 'gear']) {
+  test(`compiled copy failure offers details and ${entry} scrolls/focuses the error; retry restores normal focus`, async () => {
+    let failing = true;
+    const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {
+      if (failing) throw new Error('クリップボードが使用中です');
+    } });
+    try {
+      const copy = ui.element(node => node.getAttribute('aria-label') === '印影をコピー');
+      const heading = ui.input('settings-heading'), panel = heading.parentNode.parentNode;
+      const open = async () => {
+        if (entry === 'shortcut') ui.keydown({ key: ',', ctrlKey: true });
+        else ui.element(node => node.getAttribute('aria-label') === '設定').dispatch('click');
+        await ui.tick();
+      };
+      assert.equal(panel.hidden, true);
+      assert.equal(copy.disabled, false);
+      copy.dispatch('click');
+      await new Promise(setImmediate); await ui.tick();
+      const failure = ui.element(node => node.getAttribute('class')?.split(' ').includes('copy-feedback') && node.getAttribute('role') === 'alert');
+      assert.equal(failure.textContent, '× コピー失敗詳細（Ctrl+,）');
+      assert.equal(failure.childNodes.filter(node => node.nodeName === 'BR').length, 1);
+      const detail = ui.input('copy-error');
+      assert.match(detail.textContent, /^× 画像コピーに失敗しました：.*クリップボードが使用中です/);
+      assert.equal(detail.getAttribute('tabindex'), '-1');
+      assert.equal(panel.hidden, true);
+      await open();
+      assert.equal(panel.hidden, false);
+      assert.equal(detail.focused, true);
+      assert.equal(detail.scrolled, true);
+      assert.equal(detail.scrollOptions.block, 'start');
+      assert.equal(detail.focusOptions.preventScroll, true);
+      assert.equal(heading.focused, undefined);
+      ui.keydown({ key: 'Escape' }); await ui.tick();
+      assert.equal(panel.hidden, true);
+      assert.equal(ui.element(node => node.getAttribute('aria-label') === '設定').focused, true);
+      detail.focused = false; detail.scrolled = false;
+      await open();
+      assert.equal(detail.focused && detail.scrolled, true, 'failure details remain the target after closing');
+      ui.button('閉じる').dispatch('click'); await ui.tick();
+      failing = false;
+      copy.dispatch('click');
+      await new Promise(setImmediate); await ui.tick();
+      assert.equal(failure.textContent, '');
+      await open();
+      assert.equal(heading.focused && heading.scrolled, true, 'successful retry restores heading navigation');
+    } finally { ui.destroy(); }
+  });
+}
+
+test('two-line warnings and copy details fit the 100px seal at 14px with bundled UI glyphs', async () => {
+  const ui = app();
+  await ui.load();
+  const warningTexts = [];
+  ui.run('settingsUnsaved = false');
+  ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+  await ui.flush(); warningTexts.push(ui.run('startupIssue'));
+  ui.edit('R7.2.29');
+  await ui.flush(); warningTexts.push(ui.run('startupIssue'));
+  const context = bundledStampMetrics('bizudpgothic/BIZUDPGothic-Regular.ttf');
+  context.font = '400 14px "estamp BIZ UDPGothic"';
+  for (const text of [...warningTexts, '× コピー失敗\n詳細（Ctrl+,）']) {
+    const lines = text.split('\n');
+    assert.equal(lines.length, 2);
+    for (const line of lines) assert.ok(context.measureText(line).width <= 100 - 2 * 4 - 2, line);
+    assert.equal(lines.length * 20 + 2 * 4 + 2, 50);
+  }
 });
 
 for (const pause of ['render', 'image']) {

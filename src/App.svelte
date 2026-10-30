@@ -20,6 +20,7 @@
   let settingsOpen = false;
   let settingsButton: HTMLButtonElement;
   let settingsHeading: HTMLHeadingElement;
+  let copyError: HTMLParagraphElement;
   let viewport: HTMLDivElement;
   let initialLoad = true;
   let settingsUnsaved = false;
@@ -27,8 +28,9 @@
     settingsOpen = true;
     await tick();
     if (disposed || !settingsOpen) return;
-    settingsHeading?.focus();
-    settingsHeading?.scrollIntoView({ block: 'start' });
+    const target = copyFeedback.startsWith('×') ? copyError : settingsHeading;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'start' });
   };
   const closeSettings = () => {
     settingsOpen = false;
@@ -115,6 +117,9 @@
   // Independent of copy feedback: a successful copy must not hide a save error.
   $: startupIssue = fontMessage ? '× 書体エラー'
     : storageMessage.startsWith('×') ? '× 設定エラー'
+    : dateState.error || imageError ? '× 入力エラー\n（Ctrl+,）'
+    // First-save guidance remains below the seal and takes priority over edits.
+    : !settingsUnsaved && dirty ? '△ 変更未保存\n（Ctrl+,）'
     : storageMessage.includes('△') ? '△ 設定に注意' : '';
 
   const prepareFonts = async () => {
@@ -287,7 +292,7 @@
         class:feedback-visible={!!copyFeedback && !copyFeedback.startsWith('×')}
         role="status" aria-live="polite" aria-atomic="true">{copyFeedback.startsWith('×') ? '' : copyFeedback}</p>
       <p class="stamp-feedback copy-feedback" class:feedback-visible={copyFeedback.startsWith('×')}
-        role="alert" aria-live="assertive" aria-atomic="true">{copyFeedback.startsWith('×') ? copyFeedback : ''}</p>
+        role="alert" aria-live="assertive" aria-atomic="true">{#if copyFeedback.startsWith('×')}{copyFeedback}<br>詳細（Ctrl+,）{/if}</p>
       <p class="stamp-feedback startup-issue" class:storage-warning={startupIssue.startsWith('△')}
         class:feedback-visible={!!startupIssue}
         role="alert" aria-live="assertive" aria-atomic="true">{startupIssue}</p>
@@ -302,7 +307,8 @@
       class:storage-success={storageMessage.startsWith('○')} role="status">{storageMessage}</p>
   {/if}
   {#if copyMessage}
-    <p class="storage-message" class:storage-warning={copyMessage.startsWith('△')}
+    <p id="copy-error" class="storage-message" tabindex="-1" bind:this={copyError}
+      class:storage-warning={copyMessage.startsWith('△')}
       class:storage-success={copyMessage.startsWith('○')}>{copyMessage}</p>
   {/if}
   {#if fontMessage}
@@ -441,7 +447,7 @@
     background: var(--background);
   }
   .copy-feedback { bottom: 0; }
-  .startup-issue { top: 0; }
+  .startup-issue { top: 0; white-space: pre-line; }
   .app-viewport {
     height: 100vh;
     overflow-y: auto;

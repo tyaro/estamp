@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 
 // Read the bundled TrueType font's advances and ink boxes without installing a
 // font or adding a renderer dependency. This checks geometry, not rasterization.
-export function bundledStampMetrics() {
-  const bytes = readFileSync(new URL('../../public/fonts/shipporiminchob1/ShipporiMinchoB1-Bold.ttf', import.meta.url));
+export function bundledStampMetrics(fontPath = 'shipporiminchob1/ShipporiMinchoB1-Bold.ttf') {
+  const bytes = readFileSync(new URL(`../../public/fonts/${fontPath}`, import.meta.url));
   const tables = {};
   for (let i = 0; i < bytes.readUInt16BE(4); i++) {
     const at = 12 + i * 16;
