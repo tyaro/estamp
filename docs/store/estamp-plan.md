@@ -229,6 +229,8 @@ Macの検証結果は [開発手順](../development.md#pr-06-ui権限csp) と `o
 
 2026-10-30 JST 最終検証: Mac ARM64 / macOS 27.2（26B123）、Node 24.22.1、Yarn 1.22.22、Rust／Cargo stable 1.99.1（固定1.95.0は未検証）。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2`、TMPDIRはリポジトリ内のoutputs配下とし、指定5コマンドを順に直列実行してすべて終了コード0。`yarn run check` は診断0 errors／0 warnings、日付10・保存4・App45・書体4・画像8・UI/CSP10＝JS81件合格、Rust28件合格。新しいnative計測分岐もopt-inのcargo checkが成功し、通常設定へ戻したcheckも成功した。Viteに計測フラグの無効値を明示して本番JSから計測コードを除去し、修正後に指定5コマンドを再度順番に完了した。最終distの4TTF・2OFLは原本とバイト一致、HTMLに外部資源・インラインstyleなし、HTML/JS/CSSに外部フォントURLなし、JSに計測用global／command／console文字列なし。生成ACLのmain/local限定と7grant、lock2本のSHA-256不変、印影生成コード・既存アイコン不変、`git diff --check` を確認。Yarn global-folder／Browserslist通知と、共有Rust環境のrust-objcopy／libLLVM.dylib不足によるstrip警告は既存同様に残るがrelease buildは成功。共有toolchainの変更、ネットワーク取得、git add／commit、GUI起動は行っていない。証跡は `outputs/pr06-*.txt` と `outputs/pr06-artifact-audit.json`（未追跡）。Windows・GUIの合否は上記手順へ引き継ぐ。
 
+2026-10-30 JST PR #11 レビュー修正1: 250×120でコピー結果が見えないP2に対応。100px印影枠内の下端に14pxの○成功（1.8秒）／△中止・×失敗（次のコピー操作まで保持）、上端に設定読込・保存エラー／警告と書体エラーの独立表示を追加。既存の詳細段落も維持。通知はクリックを通過し、成功・中止はpolite、失敗はalert／assertive。クラスと抽出CSSだけを使い本番CSPは変更しない。構造・時間・失敗保持・復旧・ARIA・コントラストの回帰テストと、[Windows手順](../verification/pr06-windows-check.md#250120での通知レビュー修正)を追加。指定4検証はすべて終了0（診断0件・JS91件合格）。検証結果は `outputs/pr06-final2.md`（未追跡）、Windowsの実表示・Narratorは引き続き未実施。
+
 ### PR-07：再利用可能な MSIX ビルド・検証手順（1〜1.5 人日）
 
 - **目的:** estamp の MSIX を作り、後続二製品へ同じ工程を渡す。

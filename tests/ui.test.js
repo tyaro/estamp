@@ -10,7 +10,8 @@ const config = JSON.parse(read('src-tauri/tauri.conf.json'));
 const app = read('src/App.svelte');
 const native = read('src-tauri/src/main.rs');
 const build = read('src-tauri/build.rs');
-const ast = parse(app.replace(/<script lang="ts">[\s\S]*?<\/script>/, '<script></script>'));
+const markup = app.replace(/<script lang="ts">[\s\S]*?<\/script>/, '<script></script>');
+const ast = parse(markup);
 const elements = [];
 function walk(node) {
   if (node?.type === 'Element') elements.push(node);
@@ -143,6 +144,58 @@ test('startup geometry and seal remain unchanged while resize is bounded to usef
   assert.deepEqual([window.minWidth, window.minHeight], [250, 120]);
   assert.match(read('src/stampImage.js'), /width="100" height="100"/);
   assert.match(app, /height: 100vh;\s*overflow-y: auto;\s*overflow-x: hidden;/);
+});
+
+test('feedback lives inside the visible stamp box, passes clicks through and has separate live regions', () => {
+  const box = elements.find(node => literal(node, 'class') === 'stamp-box');
+  const main = elements.find(node => literal(node, 'class') === 'main');
+  assert.ok(main.children.includes(box));
+  const children = box.children.filter(node => node.type === 'Element');
+  assert.equal(children[0].name, 'button');
+  assert.equal(literal(children[0], 'class'), 'stamp-copy');
+  assert.ok(children[0].attributes.some(a => a.type === 'EventHandler' && a.name === 'click'));
+  const badges = children.slice(1);
+  assert.equal(badges.length, 3);
+  assert.deepEqual(badges.map(node => literal(node, 'role')), ['status', 'alert', 'alert']);
+  assert.deepEqual(badges.map(node => literal(node, 'aria-live')), ['polite', 'assertive', 'assertive']);
+  assert.ok(badges.every(node => literal(node, 'aria-atomic') === 'true'));
+  assert.ok(badges.every(node => node.name === 'p' && !attr(node, 'tabindex') && !attr(node, 'style')));
+  assert.ok(badges.every(node => node.attributes.some(a => a.type === 'Class' && a.name === 'feedback-visible')));
+  const content = node => markup.slice(node.start, node.end);
+  assert.match(content(badges[0]), /copyFeedback\.startsWith\('×'\) \? '' : copyFeedback/);
+  assert.match(content(badges[1]), /copyFeedback\.startsWith\('×'\) \? copyFeedback : ''/);
+  assert.match(content(badges[2]), /\{startupIssue\}/);
+  assert.match(app, /\.stamp-box \{ position: relative; width: 100px; height: 100px; \}/);
+  const feedbackCss = app.match(/\.stamp-feedback\s*\{([^}]+)\}/)[1];
+  for (const rule of ['position: absolute', 'left: 0', 'width: 100%', 'font-size: 14px', 'line-height: 20px', 'pointer-events: none']) {
+    assert.ok(feedbackCss.includes(rule), rule);
+  }
+  const visibleCss = app.match(/\.feedback-visible\s*\{([^}]+)\}/)[1];
+  for (const rule of ['padding: 4px', 'border: 1px solid currentColor', 'background: var(--background)']) assert.ok(visibleCss.includes(rule));
+  assert.doesNotMatch(feedbackCss, /display:\s*none|visibility:\s*hidden/);
+  assert.doesNotMatch(app, /\.stamp-feedback:empty\s*\{[^}]*display:\s*none/);
+  assert.match(app, /\.copy-feedback \{ bottom: 0; \}/);
+  assert.match(app, /\.startup-issue \{ top: 0; \}/);
+  // Both 30px badges stay in the 100px seal (y=5..105), within 120px.
+  assert.ok(5 + 100 <= config.app.windows[0].height);
+  assert.ok(2 * (20 + 2 * 4 + 2) < 100);
+  assert.match(app, /\{#if copyMessage\}[\s\S]*?<p class="storage-message"[\s\S]*?\{copyMessage\}<\/p>/);
+});
+
+test('badge state colors meet 4.5:1 contrast against their opaque background', () => {
+  const theme = read('src/theme.css');
+  const color = name => theme.match(new RegExp(`--${name}: (#[0-9A-Fa-f]{6})`))[1];
+  const luminance = hex => {
+    const [r, g, b] = hex.slice(1).match(/../g).map(value => {
+      const channel = parseInt(value, 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  for (const state of ['success', 'warning', 'error']) {
+    const values = [luminance(color(state)), luminance(color('background'))].sort((a, b) => b - a);
+    assert.ok((values[0] + 0.05) / (values[1] + 0.05) >= 4.5, state);
+  }
 });
 
 test('design palette, type and controls use the PR-2 source values without Skeleton sample theme', () => {

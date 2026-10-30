@@ -36,6 +36,24 @@
   let copying = false;
   let copyMessage = '';
   let disposed = false;
+  let copyFeedback = '';
+  let copyFeedbackTimer: number | undefined;
+  const setCopyFeedback = (message: string) => {
+    window.clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = undefined;
+    if (disposed) return;
+    copyMessage = message;
+    copyFeedback = message.startsWith('○') ? '○ コピー成功'
+      : message.startsWith('△') ? '△ コピー中止'
+      : message ? '× コピー失敗' : '';
+    // Keep failures/cancellations visible until the next copy attempt.
+    if (message.startsWith('○')) {
+      copyFeedbackTimer = window.setTimeout(() => {
+        copyFeedback = '';
+        copyFeedbackTimer = undefined;
+      }, 1800);
+    }
+  };
   let busy = true;
   let ready = false;
   let revision: string | null = null;
@@ -48,6 +66,10 @@
     || JSON.stringify(settingsSnapshot($settings, dateState)) !== savedSnapshot);
   $: if (!dirty && storageMessage === '△ 未保存の変更があります') storageMessage = '';
   let fontMessage = '';
+  // Independent of copy feedback: a successful copy must not hide a save error.
+  $: startupIssue = fontMessage ? '× 書体エラー'
+    : storageMessage.startsWith('×') ? '× 設定エラー'
+    : storageMessage.includes('△') ? '△ 設定に注意' : '';
 
   const prepareFonts = async () => {
     try {
@@ -146,6 +168,7 @@
     document.addEventListener('visibilitychange', refreshToday);
     return () => {
       disposed = true;
+      window.clearTimeout(copyFeedbackTimer);
       window.clearInterval(timer);
       window.removeEventListener('focus', refreshToday);
       document.removeEventListener('visibilitychange', refreshToday);
@@ -154,7 +177,7 @@
   const clipboardCopy = async () => {
     if (composing || busy || !ready || !fontsReady || copying || dateState.error || imageError) return;
     copying = true;
-    copyMessage = '';
+    setCopyFeedback('');
     try {
       refreshToday();
       await tick();
@@ -168,16 +191,16 @@
         if (disposed || composing || busy || !ready || dateState.error || imageError
           || stampSvg !== expectedSvg
           || $settings.output_size !== outputSize) {
-          copyMessage = '△ 印影が変更されたためコピーを中止しました。もう一度コピーしてください。';
+          setCopyFeedback('△ 印影が変更されたためコピーを中止しました。もう一度コピーしてください。');
           return;
         }
         await writeImage(image);
-        copyMessage = '○ 画像をコピーしました';
+        setCopyFeedback('○ 画像をコピーしました');
       } finally {
         await image.close();
       }
     } catch (error) {
-      copyMessage = `× 画像コピーに失敗しました：${String(error)}`;
+      setCopyFeedback(`× 画像コピーに失敗しました：${String(error)}`);
     } finally {
       copying = false;
     }
@@ -185,15 +208,26 @@
 </script>
 <div class="app-viewport">
   <div class="main">
-    <button class="stamp-copy" type="button" aria-label="印影をコピー"
-      disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
-      aria-busy={copying} on:click={clipboardCopy}>
-      {#if fontsReady}
-        {@html stampSvg}
-      {:else}
-        書体を読込中…
-      {/if}
-    </button>
+    <div class="stamp-box">
+      <button class="stamp-copy" type="button" aria-label="印影をコピー"
+        disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
+        aria-busy={copying} on:click={clipboardCopy}>
+        {#if fontsReady}
+          {@html stampSvg}
+        {:else}
+          書体を読込中…
+        {/if}
+      </button>
+      <p class="stamp-feedback copy-feedback" class:storage-success={copyFeedback.startsWith('○')}
+        class:storage-warning={copyFeedback.startsWith('△')}
+        class:feedback-visible={!!copyFeedback && !copyFeedback.startsWith('×')}
+        role="status" aria-live="polite" aria-atomic="true">{copyFeedback.startsWith('×') ? '' : copyFeedback}</p>
+      <p class="stamp-feedback copy-feedback" class:feedback-visible={copyFeedback.startsWith('×')}
+        role="alert" aria-live="assertive" aria-atomic="true">{copyFeedback.startsWith('×') ? copyFeedback : ''}</p>
+      <p class="stamp-feedback startup-issue" class:storage-warning={startupIssue.startsWith('△')}
+        class:feedback-visible={!!startupIssue}
+        role="alert" aria-live="assertive" aria-atomic="true">{startupIssue}</p>
+    </div>
   </div>
   {#if storageMessage}
     <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
@@ -201,7 +235,7 @@
   {/if}
   {#if copyMessage}
     <p class="storage-message" class:storage-warning={copyMessage.startsWith('△')}
-      class:storage-success={copyMessage.startsWith('○')} role="status">{copyMessage}</p>
+      class:storage-success={copyMessage.startsWith('○')}>{copyMessage}</p>
   {/if}
   {#if fontMessage}
     <p class="storage-message" role="alert">{fontMessage}</p>
@@ -291,6 +325,25 @@
     min-height: 100px;
   }
   .stamp-copy :global(svg) { display: block; }
+  .stamp-box { position: relative; width: 100px; height: 100px; }
+  .stamp-feedback {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    color: var(--error);
+    font-size: 14px;
+    line-height: 20px;
+    pointer-events: none;
+  }
+  /* Keep empty live regions mounted and exposed to assistive technology. */
+  .feedback-visible {
+    padding: 4px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    background: var(--background);
+  }
+  .copy-feedback { bottom: 0; }
+  .startup-issue { top: 0; }
   .app-viewport {
     height: 100vh;
     overflow-y: auto;

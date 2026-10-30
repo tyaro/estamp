@@ -45,6 +45,18 @@ function app({
   const gate = deferred();
   const reached = deferred();
   const events = { renders: [], writes: [], closed: 0, sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
+  const timeouts = new Map();
+  let elapsed = 0;
+  let nextTimer = 2;
+  const advanceFeedback = ms => {
+    elapsed += ms;
+    for (const [id, timer] of timeouts) {
+      if (timer.at <= elapsed) {
+        timeouts.delete(id);
+        timer.callback();
+      }
+    }
+  };
   const image = { close: async () => { events.closed++; } };
   const boundary = async stage => {
     if (stage === failAt) throw new Error('検証エラー');
@@ -108,7 +120,7 @@ function app({
   };
   context = vm.createContext({
     // Svelte declares these reactive assignment targets when it compiles the DOM.
-    str_date: '', stampSvg: '', imageError: '', requestAnimationFrame: callback => callback(),
+    str_date: '', stampSvg: '', imageError: '', startupIssue: '', requestAnimationFrame: callback => callback(),
     exports: {}, require: name => {
       assert.ok(name in imports, `Unexpected import: ${name}`);
       return imports[name];
@@ -117,6 +129,12 @@ function app({
     window: {
       ...listeners('window'), setInterval: callback => { events.timer = callback; return 1; },
       clearInterval: id => events.cleared.push(id),
+      setTimeout: (callback, delay) => {
+        const id = nextTimer++;
+        timeouts.set(id, { callback, at: elapsed + delay });
+        return id;
+      },
+      clearTimeout: id => timeouts.delete(id),
     },
     document: {
       ...listeners('document'),
@@ -132,7 +150,8 @@ function app({
   run(compiled);
   run('busy = false; ready = true; fontsReady = true');
   return {
-    settings, events, gate, reached, run, flush, mount: () => mount(),
+    settings, events, gate, reached, run, flush, advanceFeedback, timeouts, mount: () => mount(),
+    recover: () => { failAt = ''; },
     load: () => run('load()'), importLegacy: () => run('importLegacy()'),
     copy: () => run('clipboardCopy()'), save: () => run('save()'),
     edit: input => run(`inputDate({ currentTarget: { value: ${JSON.stringify(input)} } })`),
@@ -158,6 +177,9 @@ for (const pause of ['render', 'image']) {
       assert.match(ui.run('copyMessage'), /変更.*中止/);
       assert.equal(ui.events.closed, 1);
       assert.equal(ui.run('copying'), false);
+      assert.equal(ui.run('copyFeedback'), '△ コピー中止');
+      ui.advanceFeedback(60_000);
+      assert.equal(ui.run('copyFeedback'), '△ コピー中止');
       if (change === 'invalid date') ui.edit('R7.10.22');
       await ui.copy();
       assert.equal(ui.events.writes.length, 1);
@@ -182,6 +204,102 @@ test('App copies an unchanged stamp once and releases its image', async () => {
   assert.equal(ui.events.closed, 1);
   assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
   assert.equal(ui.run('copying'), false);
+});
+
+test('copy success badge expires at 1.8 seconds, keeps the paragraph and resets for a new copy', async () => {
+  const ui = app({ pause: '' });
+  await ui.copy();
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  ui.advanceFeedback(1799);
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  await ui.copy();
+  ui.advanceFeedback(1); // The previous copy timer must have been cleared.
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  ui.advanceFeedback(1799);
+  assert.equal(ui.run('copyFeedback'), '');
+  assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
+});
+
+for (const failAt of ['fonts', 'render', 'image', 'write']) {
+  test(`copy failure at ${failAt} persists until the next attempt, which can succeed`, async () => {
+    const ui = app({ pause: '', failAt });
+    await ui.copy();
+    assert.equal(ui.run('copyFeedback'), '× コピー失敗');
+    assert.match(ui.run('copyMessage'), /^× .*検証エラー/);
+    assert.equal(ui.timeouts.size, 0);
+    ui.advanceFeedback(60_000);
+    assert.equal(ui.run('copyFeedback'), '× コピー失敗');
+    ui.recover();
+    const copying = ui.copy();
+    assert.equal(ui.run('copyFeedback'), '');
+    await copying;
+    assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+    assert.equal(ui.events.writes.length, 1);
+  });
+}
+
+test('unmount clears the success timer and pending copy cannot create feedback after disposal', async () => {
+  const ui = app({ pause: '' });
+  const unmount = ui.mount();
+  await new Promise(setImmediate);
+  await ui.copy();
+  assert.equal(ui.timeouts.size, 1);
+  unmount();
+  assert.equal(ui.timeouts.size, 0);
+
+  const pending = app({ pause: 'write' });
+  const dispose = pending.mount();
+  await new Promise(setImmediate);
+  const copying = pending.copy();
+  await pending.reached.promise;
+  dispose();
+  pending.gate.resolve();
+  await copying;
+  assert.equal(pending.run('copyFeedback'), '');
+  assert.equal(pending.timeouts.size, 0);
+});
+
+test('load/save problems stay visible independently of successful copy and clear after recovery', async () => {
+  for (const operation of ['load', 'save']) {
+    let failing = true;
+    const ui = app({
+      pause: '',
+      read: async () => {
+        if (operation === 'load' && failing) throw new Error('read failed');
+        return { settings: initialSettings(), revision: null, warning: null };
+      },
+      persist: async () => {
+        if (failing) throw new Error('save failed');
+        return 'saved';
+      },
+    });
+    await ui[operation]();
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '× 設定エラー');
+    ui.advanceFeedback(60_000);
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '× 設定エラー');
+    if (operation === 'save') {
+      await ui.copy();
+      assert.equal(ui.run('startupIssue'), '× 設定エラー');
+      assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+    }
+    failing = false;
+    await ui[operation]();
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '');
+  }
+});
+
+test('startup indicator also exposes load warnings and font failures', async () => {
+  const ui = app({ read: async () => ({ settings: initialSettings(), revision: null, warning: '△ 設定を退避しました' }) });
+  await ui.load();
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 設定に注意');
+  const fonts = app({ failAt: 'fonts' });
+  await fonts.run('prepareFonts()');
+  await fonts.flush();
+  assert.equal(fonts.run('startupIssue'), '× 書体エラー');
 });
 
 test('App preserves edits after the save handler completes and saves them next time', async () => {
