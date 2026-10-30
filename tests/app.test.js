@@ -8,6 +8,7 @@ import { get, writable } from 'svelte/store';
 import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
+import { mountApp } from './helpers/appDom.js';
 
 // Execute the production App handlers, including their post-await code. Only the
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
@@ -147,7 +148,15 @@ function app({
   // Svelte's $settings assignment writes to the real store, so reintroducing
   // `$settings = config` in App after a save makes the regression test fail.
   Object.defineProperty(context, '$settings', { get: () => get(settings), set: value => settings.set(value) });
-  run(compiled);
+  // Observe assignments, including assigning the same object (which Svelte
+  // still invalidates). Identity assertions alone cannot catch that regression.
+  let dateState;
+  events.dateAssignments = 0;
+  Object.defineProperty(context, 'dateState', {
+    get: () => dateState,
+    set: value => { dateState = value; events.dateAssignments++; },
+  });
+  run(compiled.replace('let dateState =', 'dateState ='));
   run('busy = false; ready = true; fontsReady = true');
   return {
     settings, events, gate, reached, run, flush, advanceFeedback, timeouts, mount: () => mount(),
@@ -467,6 +476,7 @@ for (const operation of ['load', 'importLegacy']) {
       assert.equal(ui.run('legacyAvailable'), true);
       assert.equal(ui.run('confirmingImport'), false);
       const state = ui.run('dateState');
+      assert.equal(ui.run('dateDraft'), state.input);
       assert.equal(state.mode, mode === 'auto' ? 'auto' : 'manual');
       if (mode === 'invalid manual') {
         assert.ok(state.error);
@@ -643,11 +653,13 @@ test('IME composition defers date validation and blocks save/copy until the comm
   ui.run('composing = true');
   ui.edit('令和');
   assert.equal(ui.run('dateState'), before);
+  assert.equal(ui.run('dateDraft'), '令和');
   await ui.copy(); await ui.save();
   assert.equal(ui.events.writes.length, 0);
   assert.equal(ui.events.sent.length, 0);
   ui.run("finishComposition({target: {id: 'date-input', value: '令和7年10月22日'}})");
   assert.equal(ui.run('dateState.date'), '2025-10-22');
+  assert.equal(ui.run('dateDraft'), '令和7年10月22日');
   assert.equal(ui.run('dateState.error'), '');
   await ui.copy(); await ui.save();
   assert.equal(ui.events.writes.length, 1);
@@ -656,6 +668,121 @@ test('IME composition defers date validation and blocks save/copy until the comm
   ui.run("composing = true; finishComposition({target: {id: 'top-text', value: '部署名'}})");
   assert.equal(ui.run('dateState.date'), '2025-10-22');
 });
+
+test('date refresh never assigns unchanged state or any state during composition', async () => {
+  const ui = app({ pause: '' });
+  const dispose = ui.mount();
+  await new Promise(setImmediate);
+  const refresh = () => {
+    ui.events.timer();
+    ui.events.listeners.get('window:focus')();
+    ui.events.listeners.get('document:visibilitychange')();
+  };
+  let assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'same-day refresh must not assign even the same object');
+  ui.run('composing = true');
+  ui.edit('令和');
+  ui.advance(new Date(2026, 0, 1));
+  refresh();
+  ui.run('resetDate()');
+  assert.equal(ui.events.dateAssignments, assignments, 'midnight refresh must wait for composition');
+  assert.equal(ui.run('dateDraft'), '令和');
+  ui.run("finishComposition({target: {id: 'date-input', value: '令和7年10月22日'}})");
+  assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'manual dates must not be reassigned');
+  ui.edit('令和');
+  assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'invalid drafts must not be reassigned');
+  ui.run('resetDate()');
+  assert.equal(ui.run('dateDraft'), '2026-01-01');
+  assert.equal(ui.run('dateState.mode'), 'auto');
+  ui.advance(new Date(2026, 0, 2));
+  refresh();
+  assert.equal(ui.run('dateDraft'), '2026-01-02');
+  assert.equal(ui.run('dateState.input'), '2026-01-02');
+  dispose();
+});
+
+for (const committed of ['令和7年10月22日', '令和7年2月29日']) {
+  test(`compiled App retains the date DOM draft across timer/focus/resume and validates ${committed}`, async () => {
+    const ui = await mountApp(initialSettings());
+    try {
+      const input = ui.input('date-input');
+      const confirmation = ui.input('date-confirmation').textContent;
+      input.dispatch('compositionstart');
+      input.nativeValue = '令和';
+      input.dispatch('input', { isComposing: true });
+      const writes = input.valueWrites;
+      await ui.tick();
+      assert.equal(input.valueWrites, writes);
+      for (const midnight of [false, true]) {
+        if (midnight) ui.advance(new Date(2026, 0, 1));
+        ui.timer(); ui.focus(); ui.resume();
+        // Also exercise an unrelated settings-store notification during IME.
+        ui.settings.update(value => ({ ...value, date_format: 'wareki' }));
+        await ui.tick();
+        assert.equal(input.value, '令和');
+        assert.equal(input.valueWrites, writes, 'composition must cause zero programmatic value writes');
+        assert.equal(ui.input('date-confirmation').textContent, confirmation);
+        assert.equal(ui.input('date-error').textContent, '');
+      }
+      input.nativeValue = committed;
+      input.dispatch('compositionend');
+      await ui.tick();
+      assert.equal(input.value, committed);
+      assert.equal(input.valueWrites, writes, 'committed raw text also needs no DOM rewrite');
+      if (committed.includes('2月29日')) {
+        assert.match(ui.input('date-error').textContent, /存在しません/);
+        assert.equal(ui.input('date-confirmation').textContent, confirmation);
+      } else {
+        assert.equal(ui.input('date-error').textContent, '');
+        assert.match(ui.input('date-confirmation').textContent, /令和7年10月22日/);
+      }
+      // Some WebViews send a final input event after compositionend.
+      input.dispatch('input', { isComposing: false });
+      ui.timer();
+      await ui.tick();
+      assert.equal(input.value, committed);
+      assert.equal(input.valueWrites, writes);
+    } finally { ui.destroy(); }
+  });
+}
+
+const otherDrafts = [
+  ...['top-text', 'bottom-text'].map(id => [id, '変換中の文字']),
+  // Native number inputs expose ASCII numeric text or an empty value during an
+  // incomplete edit; full-width IME text is not exposed as their .value.
+  ...['top-size', 'date-size', 'bottom-size', 'output-size'].flatMap(id => [[id, '080'], [id, '']]),
+];
+for (const [id, draft] of otherDrafts) {
+  test(`compiled App preserves IME input ${JSON.stringify(draft)} in ${id} across timer and store updates`, async () => {
+    const ui = await mountApp(initialSettings());
+    try {
+      const input = ui.input(id);
+      input.dispatch('compositionstart');
+      input.nativeValue = draft;
+      input.dispatch('input', { isComposing: true });
+      const writes = input.valueWrites;
+      await ui.tick();
+      ui.advance(new Date(2026, 0, 1));
+      ui.timer();
+      ui.settings.update(value => ({ ...value, date_format: 'wareki' }));
+      await ui.tick();
+      assert.equal(input.value, draft);
+      assert.equal(input.valueWrites, writes);
+      input.dispatch('compositionend');
+      input.dispatch('input', { isComposing: false });
+      ui.timer();
+      await ui.tick();
+      assert.equal(input.value, draft);
+      assert.equal(input.valueWrites, writes);
+      assert.match(ui.input('date-confirmation').textContent, /令和8年1月1日/);
+    } finally { ui.destroy(); }
+  });
+}
 
 for (const [input, message] of [
   ['H31.5.1', '平成31年5月1日は平成の期間外です。正しい表記は令和元年5月1日です。'],

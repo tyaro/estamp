@@ -14,6 +14,8 @@
 
   let composing = false;
   let dateState = todayState();
+  // Keep the raw IME draft independent of the last validated date.
+  let dateDraft = dateState.input;
   let fontsReady = false;
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
   $: stampSvg = fontsReady ? buildStampSvg($settings, str_date) : '';
@@ -21,16 +23,32 @@
     try { validateImageSettings($settings); return ''; }
     catch (error) { return `× ${String(error)}`; }
   })();
-  const refreshToday = () => { dateState = refreshDate(dateState); };
+  const refreshToday = () => {
+    if (composing) return;
+    const refreshed = refreshDate(dateState);
+    if (refreshed === dateState) return;
+    dateState = refreshed;
+    dateDraft = dateState.input;
+  };
   const inputDate = (event: Event) => {
+    dateDraft = (event.currentTarget as HTMLInputElement).value;
     if (composing || (event as InputEvent).isComposing) return;
-    dateState = editDate(dateState, (event.currentTarget as HTMLInputElement).value);
+    dateState = editDate(dateState, dateDraft);
   };
 
   const finishComposition = (event: CompositionEvent) => {
     composing = false;
     const input = event.target as HTMLInputElement;
-    if (input.id === 'date-input') dateState = editDate(dateState, input.value);
+    if (input.id === 'date-input') {
+      dateDraft = input.value;
+      dateState = editDate(dateState, dateDraft);
+    }
+  };
+
+  const resetDate = () => {
+    if (composing) return;
+    dateState = todayState();
+    dateDraft = dateState.input;
   };
 
   let copying = false;
@@ -90,6 +108,7 @@
   const applyLoaded = (result: LoadedSettings) => {
     $settings = result.settings;
     dateState = restoreDate(result.settings);
+    dateDraft = dateState.input;
     savedSnapshot = JSON.stringify(settingsSnapshot($settings, dateState));
     revision = result.revision;
     storageMessage = result.warning ?? '○ 設定を読み込みました';
@@ -253,13 +272,13 @@
 
       <label for="date-input">日付（西暦・和暦）</label>
       <input id="date-input" type="text" aria-invalid={!!dateState.error}
-        aria-describedby="date-help date-error date-confirmation" value={dateState.input}
+        aria-describedby="date-help date-error date-confirmation" value={dateDraft}
         on:input={inputDate} placeholder="R7.10.22" autocomplete="off" spellcheck={false}>
       <p id="date-error" role="alert" class="date-error">{dateState.error ? `× ${dateState.error}` : ''}</p>
       <p id="date-help" class="hint">例：R7.10.22、令和7年10月22日、2025/10/22</p>
       <p id="date-confirmation">{describeDate(dateState.date)}</p>
       <p class="hint">{dateState.mode === 'auto' ? '自動：今日の日付に更新します' : '手動：指定した日付を使います'}</p>
-      <button type="button" on:click={() => { dateState = todayState(); }}>今日に戻す</button>
+      <button type="button" on:click={resetDate}>今日に戻す</button>
       <label for="date-size">日付の文字サイズ</label>
       <input id="date-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.mid_font_size}>
       <label for="date-format">日付の表示形式</label>
