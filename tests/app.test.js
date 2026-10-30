@@ -265,6 +265,53 @@ test('long text warnings leave save and copy enabled', async () => {
   assert.equal(ui.events.writes.length, 1);
 });
 
+for (const [placement, names] of [
+  ['top only', { top_str: '営業 第一　髙橋 太郎' }],
+  ['bottom only', { btm_str: '髙橋　渡邊' }],
+  ['both', { top_str: '営業 第一', btm_str: '髙橋 渡邊' }],
+]) {
+  test(`compiled two-line warning handles 139/140px and allows copy/save: ${placement}`, async () => {
+    let copies = 0, saves = 0;
+    const ui = await mountApp({ ...initialSettings(), ...names, output_size: 140 }, {
+      revision: 'saved', clipboard: async () => { copies++; },
+      persist: async config => { saves++; return JSON.stringify(config); },
+    });
+    try {
+      ui.keydown({ key: ',', ctrlKey: true }); await ui.tick();
+      const warning = ui.input('output-size-warning');
+      const output = ui.input('output-size');
+      const copy = ui.element(node => node.getAttribute('aria-label') === '印影をコピー');
+      assert.equal(warning.textContent, '');
+      for (const size of [139, 140, 100]) {
+        output.nativeValue = String(size); output.dispatch('input'); await ui.tick();
+        assert.equal(warning.textContent, size < 140 ? '△ 2行の氏名は140px以上で読みやすくなります' : '');
+        assert.equal(copy.disabled, false);
+        assert.equal(ui.button('保存').disabled, false);
+        copy.dispatch('click'); await new Promise(setImmediate); await ui.tick();
+        ui.button('保存').dispatch('click'); await new Promise(setImmediate); await ui.tick();
+      }
+      assert.equal(copies, 3);
+      assert.equal(saves, 3);
+      for (const id of ['top-text', 'bottom-text']) {
+        const input = ui.input(id);
+        input.nativeValue = '名前'; input.dispatch('input'); await ui.tick();
+      }
+      assert.equal(warning.textContent, '', 'removing the split clears the warning at 100px');
+    } finally { ui.destroy(); }
+  });
+}
+
+test('compiled output warning stays empty for single-line names, including surrounding spaces', async () => {
+  const ui = await mountApp(initialSettings());
+  try {
+    for (const text of ['名前', '国際事業推進部門室', '  髙橋　', '', '　 ']) {
+      ui.settings.update(value => ({ ...value, top_str: text, btm_str: text, output_size: 139 }));
+      await ui.tick();
+      assert.equal(ui.input('output-size-warning').textContent, '', JSON.stringify(text));
+    }
+  } finally { ui.destroy(); }
+});
+
 test('closed settings expose unsaved edits and date/size errors, then clear on revert or save', async () => {
   const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {} });
   try {

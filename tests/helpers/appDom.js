@@ -6,7 +6,7 @@ import { writable } from 'svelte/store';
 import ts from 'typescript';
 import * as dates from '../../src/date.js';
 import { saveSettings, settingsSnapshot } from '../../src/save.js';
-import { hasLongStampLine, validateImageSettings } from '../../src/stampImage.js';
+import { hasLongStampLine, splitStampText, validateImageSettings } from '../../src/stampImage.js';
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../../src/App.svelte', import.meta.url), 'utf8');
@@ -108,7 +108,7 @@ export async function mountApp(initialSettings, {
     // Keep fonts pending unless testing copy. Empty SVG avoids needing an HTML
     // parser; only rasterization and Tauri are faked for those UI tests.
     './fonts.js': { loadStampFonts: () => clipboard ? Promise.resolve() : new Promise(() => {}), loadUiFonts: async () => {} },
-    './stampImage.js': { hasLongStampLine, validateImageSettings, buildStampSvg: () => '',
+    './stampImage.js': { hasLongStampLine, splitStampText, validateImageSettings, buildStampSvg: () => '',
       renderStampImage: async () => ({ rgba: new Uint8Array(4), width: 1, height: 1 }) },
     './performance.js': { markPerformance() {} },
     './Licenses.svelte': { default: Licenses },

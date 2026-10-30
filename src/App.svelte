@@ -7,7 +7,7 @@
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
   import { saveSettings, settingsSnapshot } from './save.js';
   import { loadStampFonts, loadUiFonts } from './fonts.js';
-  import { buildStampSvg, hasLongStampLine, renderStampImage, validateImageSettings } from './stampImage.js';
+  import { buildStampSvg, hasLongStampLine, renderStampImage, splitStampText, validateImageSettings } from './stampImage.js';
   import { markPerformance } from './performance.js';
   import Licenses from './Licenses.svelte';
   import { version } from '../package.json';
@@ -354,7 +354,8 @@
       <input id="bottom-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.btm_font_size}>
       <p id="size-help" class="hint">文字サイズ：1〜400の整数。印影に収まるよう自動調整します。</p>
       <label for="output-size">出力サイズ（px）</label>
-      <input id="output-size" type="number" min="1" max="4096" step="1" aria-describedby="output-help image-error" bind:value={$settings.output_size}>
+      <input id="output-size" type="number" min="1" max="4096" step="1" aria-describedby="output-size-warning output-help image-error" bind:value={$settings.output_size}>
+      <p id="output-size-warning" class="text-warning" role="status">{$settings.output_size < 140 && (splitStampText($settings.top_str).length === 2 || splitStampText($settings.btm_str).length === 2) ? '△ 2行の氏名は140px以上で読みやすくなります' : ''}</p>
       <p id="output-help" class="hint">1〜4096pxの整数。画面の印影は100pxです。</p>
     </fieldset>
     <p id="image-error" class="date-error" role="alert">{imageError}</p>

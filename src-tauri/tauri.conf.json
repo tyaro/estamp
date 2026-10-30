@@ -23,6 +23,7 @@
         "label": "main",
         "fullscreen": false,
         "resizable": true,
+        "maximizable": false,
         "title": "電子印",
         "width": 250,
         "height": 120,

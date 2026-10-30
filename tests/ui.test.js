@@ -139,11 +139,12 @@ test('About reads the product version and reuses local full-text PR-03 licenses'
   assert.doesNotMatch(app + licenses + read('index.html'), /<(?:iframe|a)\b|https?:\/\//);
 });
 
-test('startup geometry and seal remain unchanged while resize is bounded to useful minimums', () => {
+test('startup geometry and seal remain unchanged while resize is bounded and maximize is disabled', () => {
   const [window] = config.app.windows;
   assert.equal(config.app.windows.length, 1);
   assert.deepEqual([window.width, window.height, window.maxWidth, window.maxHeight, window.resizable], [250, 120, 250, 310, true]);
   assert.deepEqual([window.minWidth, window.minHeight], [250, 120]);
+  assert.equal(window.maximizable, false);
   assert.match(read('src/stampImage.js'), /width="100" height="100"/);
   assert.match(app, /height: 100vh;\s*overflow-y: auto;\s*overflow-x: hidden;/);
 });
@@ -246,4 +247,16 @@ test('long-name warnings are directly beneath their described inputs and use the
     assert.match(markup.slice(warning.start, warning.end), /△ 8文字を超えるため縮小します。空白で2行に分けられます/);
   }
   assert.match(app, /\.text-warning \{ color: #8A5700; \}/);
+});
+
+test('two-line output warning is directly beneath its described input and reuses the name warning style', () => {
+  const input = byId('output-size'), warning = byId('output-size-warning');
+  const descriptions = literal(input, 'aria-describedby').split(' ');
+  assert.deepEqual(descriptions, ['output-size-warning', 'output-help', 'image-error']);
+  for (const id of descriptions) assert.ok(byId(id), id);
+  assert.equal(elements[elements.indexOf(input) + 1], warning);
+  assert.equal(literal(warning, 'class'), literal(byId('top-text-warning'), 'class'));
+  assert.equal(literal(warning, 'role'), 'status');
+  assert.match(markup.slice(warning.start, warning.end), /△ 2行の氏名は140px以上で読みやすくなります/);
+  assert.match(app, /\.text-warning:empty \{ display: none; \}/);
 });
