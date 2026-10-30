@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { get, writable } from 'svelte/store';
+import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
 
@@ -34,7 +35,7 @@ const initialSettings = () => ({
 });
 
 function app({
-  pause = 'render', persist = async config => JSON.stringify(config),
+  pause = 'render', failAt = '', persist = async config => JSON.stringify(config),
   read = async () => ({ settings: initialSettings(), revision: null, warning: null }),
   importLegacy = read, legacyAvailable = async () => false,
 } = {}) {
@@ -45,6 +46,7 @@ function app({
   const events = { renders: [], writes: [], closed: 0, success: [], error: [], sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
   const image = { close: async () => { events.closed++; } };
   const boundary = async stage => {
+    if (stage === failAt) throw new Error('検証エラー');
     if (stage === pause) {
       reached.resolve();
       await gate.promise;
@@ -88,8 +90,8 @@ function app({
       events.revisions.push(args.revision);
       return await persist(args.config, args.revision);
     } },
-    '@tauri-apps/api/image': { Image: { new: async () => { await boundary('image'); return image; } } },
-    '@tauri-apps/plugin-clipboard-manager': { writeImage: async value => { events.writes.push(value.svg); } },
+    '@tauri-apps/api/image': { Image: { new: async (rgba, width, height) => { assert.ok(rgba instanceof Uint8Array); assert.equal(rgba.length, width * height * 4); await boundary('image'); return image; } } },
+    '@tauri-apps/plugin-clipboard-manager': { writeImage: async value => { assert.equal(value, image); await boundary('write'); events.writes.push(value.svg); } },
     'svelte-french-toast': {
       success: message => events.success.push(message), error: message => events.error.push(message),
     },
@@ -97,11 +99,17 @@ function app({
       ...dates, restoreDate: config => dates.restoreDate(config, now), todayState: () => dates.todayState(now), refreshDate: state => dates.refreshDate(state, now),
     },
     './save.js': { saveSettings, settingsSnapshot },
-    './fonts.js': { loadStampFonts: async () => { await boundary('fonts'); } },
+    './fonts.js': { loadStampFonts: async () => { await boundary('fonts'); }, loadUiFonts: async () => {} },
+    './performance.js': { markPerformance() {} },
+    './stampImage.js': { buildStampSvg, validateImageSettings, renderStampImage: async (text, size) => {
+      await boundary('fonts');
+      events.renders.push(text); image.svg = text; await boundary('render');
+      return { rgba: new Uint8Array(size * size * 4), width: size, height: size };
+    } },
   };
   context = vm.createContext({
     // Svelte declares these reactive assignment targets when it compiles the DOM.
-    str_date: '', dateWidth: 0, dateTextScale: 1,
+    str_date: '', stampSvg: '', imageError: '', requestAnimationFrame: callback => callback(),
     exports: {}, require: name => {
       assert.ok(name in imports, `Unexpected import: ${name}`);
       return imports[name];
@@ -172,6 +180,7 @@ test('App copies an unchanged stamp once and releases its image', async () => {
   await copying;
   assert.equal(ui.events.writes.length, 1);
   assert.ok(ui.events.writes[0].includes('2025.12.31'));
+  assert.equal(ui.events.writes[0], ui.run('stampSvg'), 'copy uses the computed preview SVG');
   assert.equal(ui.events.closed, 1);
   assert.deepEqual(ui.events.error, []);
   assert.equal(ui.events.success.length, 1);
@@ -304,6 +313,8 @@ test('App waits for fonts before rendering the first copied image', async () => 
 test('App blocks copy until the initial font load completes', async () => {
   const ui = app({ pause: 'fonts' });
   ui.run('fontsReady = false');
+  await ui.flush();
+  assert.equal(ui.run('stampSvg'), '', 'preview layout waits for bundled fonts');
   const preparing = ui.run('prepareFonts()');
   await ui.reached.promise;
   await ui.copy();
@@ -311,6 +322,7 @@ test('App blocks copy until the initial font load completes', async () => {
   ui.gate.resolve();
   await preparing;
   assert.equal(ui.run('fontsReady'), true);
+  assert.match(ui.run('stampSvg'), /<svg/);
   await ui.copy();
   assert.equal(ui.events.writes.length, 1);
 });
@@ -386,7 +398,7 @@ test('App blocks save and copy until load succeeds and allows retry after failur
   failing = false;
   await ui.load();
   assert.equal(ui.run('ready'), true);
-  assert.equal(ui.run('storageMessage'), '');
+  assert.equal(ui.run('storageMessage'), '○ 設定を読み込みました');
 });
 
 test('App imports only with availability and confirmation; failure keeps edits and revision', async () => {
@@ -456,3 +468,36 @@ test('App removes date watchers and ignores a load completing after unmount', as
   assert.equal(ui.run('revision'), null);
   assert.deepEqual(ui.events.commands.map(call => call.command), ['load']);
 });
+
+for (const failAt of ['fonts', 'render', 'image', 'write']) {
+  test(`App displays Japanese copy failure after ${failAt} and resets single-flight`, async () => {
+    const ui = app({ pause: '', failAt });
+    await ui.copy();
+    assert.match(ui.run('copyMessage'), /× 画像コピーに失敗しました.*検証エラー/);
+    assert.equal(ui.run('copying'), false);
+    assert.equal(ui.events.closed, failAt === 'write' ? 1 : 0);
+    assert.equal(ui.events.writes.length, 0);
+    assert.equal(ui.events.error.length, 1);
+  });
+}
+
+test('App persists Japanese load, save, copy success and font load failure in the UI', async () => {
+  const ui = app({ pause: '' });
+  await ui.load(); assert.match(ui.run('storageMessage'), /○ 設定を読み込みました/);
+  await ui.save(); assert.match(ui.run('storageMessage'), /○ 保存しました/);
+  await ui.copy(); assert.match(ui.run('copyMessage'), /○ 画像をコピーしました/);
+  const failed = app({ failAt: 'fonts' });
+  await failed.run('prepareFonts()');
+  assert.match(failed.run('fontMessage'), /× 書体を読み込めません.*検証エラー/);
+});
+
+for (const change of ['top_str', 'btm_str', 'top_font_size', 'mid_font_size', 'btm_font_size']) {
+  test(`App cancels edits to ${change} during render`, async () => {
+    const ui = app(); const copying = ui.copy(); await ui.reached.promise;
+    ui.settings.update(value => ({ ...value, [change]: change.endsWith('_str') ? '変更' : 72 }));
+    ui.gate.resolve(); await copying;
+    assert.equal(ui.events.writes.length, 0);
+    assert.match(ui.run('copyMessage'), /変更.*中止/);
+    assert.equal(ui.events.closed, 1);
+  });
+}

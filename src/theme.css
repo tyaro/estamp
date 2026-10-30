@@ -4,8 +4,8 @@
  */
 :root {
 	/* =~= Theme Properties =~= */
-	--theme-font-family-base: 'BIZ UDPGothic', sans-serif;
-	--theme-font-family-heading: 'BIZ UDPGothic', sans-serif;
+	--theme-font-family-base: 'estamp BIZ UDPGothic', sans-serif;
+	--theme-font-family-heading: 'estamp BIZ UDPGothic', sans-serif;
 	--theme-font-color-base: 0 0 0;
 	--theme-font-color-dark: 255 255 255;
 	--theme-rounded-base: 9999px;
