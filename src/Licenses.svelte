@@ -8,16 +8,16 @@
 
 <details class="licenses">
   <summary>ライセンス</summary>
-  <details><summary>第三者ライセンス一覧（書体）</summary><pre>{notices}</pre></details>
+  <details><summary>第三者ライセンス一覧</summary><pre>{notices}</pre></details>
   <details><summary>BIZ UDPGothic — OFL-1.1</summary><pre>{bizOfl}</pre></details>
   <details><summary>Shippori Mincho B1 — OFL-1.1</summary><pre>{shipporiOfl}</pre></details>
   <details><summary>estamp 本体 — MIT</summary><pre>{mit}</pre></details>
-  <details><summary>Skeleton テーマ — MIT</summary><pre>{skeletonMit}</pre></details>
+  <details><summary>旧Skeletonテーマ — MIT</summary><pre>{skeletonMit}</pre></details>
 </details>
 
 <style>
-  .licenses { margin: 8px; font-size: 14px; }
+  .licenses { margin: 16px 0 0; font-size: 14px; }
   summary { cursor: pointer; min-height: 32px; }
   details details { margin-top: 8px; }
-  pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { max-width: 100%; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

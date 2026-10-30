@@ -207,6 +207,30 @@ Mac検証の結果と警告は [開発手順](../development.md#pr-05-画像出�
 
 Tauri の独自登録コマンドには既定で全ウィンドウから呼べるものがある。必要なら `AppManifest::commands` と独自 permission を使って公開範囲を制限する。[Tauri capabilities](https://v2.tauri.app/security/capabilities/)
 
+#### 2026-10-30 JST 実施記録（PR-06、Mac段階）
+
+- 設計の正は [estampデザイン仕様](../design/estamp-design-rules.md)（PR #2）のみ。藍 `#243B6B`・青 `#2563EB`・背景 `#F7F6F2`・本文 `#1F1F1F`・補助 `#5F6470`・境界 `#8A8F98`・正常 `#18794E`・注意 `#8A5700`・異常 `#B42318`、本文14px・太字見出し、基本余白16px／4px単位、入力4px／ボタン8px角丸、押下高さ32px以上を反映。印影の朱 `#C74332` と100pxの描画・縮小処理は変更しない。初期250×120・最大250×310・可変サイズは維持し、縮小下限だけ250×120に固定。設定は従来どおり同じウィンドウの縦スクロールで操作する。
+- 固定幅の表とインラインスタイル、Skeletonサンプル配色・CSS読込・テーマ指定、トーストの重なりを除去。250pxの実ウィンドウ幅で入力を縦に配置し、余白とスクロールバーを差し引いた幅に収める。日付直下のエラーは `width:100%`・`min-width:0`・`white-space:normal`・`overflow-wrap:anywhere` とし、横スクロール・省略・高さ制限を設けない。`aria-describedby="date-help date-error date-confirmation"` と記号付きalertで関連付ける。H31.5.1／1872-01-01の全文保持・出力停止・訂正復旧、折返しCSSと構造を回帰テスト化した。仕様の旧「1行表示」より今回の全文可読性要求を優先した。
+- 全入力へ日本語の可視label、印影にネイティブbuttonのEnter／Space操作と読み上げ名、2pxの青い可視フォーカスを設定。DOM順のTab操作を維持。IME変換中は日付検証を保留し、保存・コピーを止め、確定後に共通の日付検証を行う。通知は画面内の○△×付き日本語で保持。About「estampについて」はpackage.jsonの版（Tauri／Cargoとの一致を検査）を表示し、PR-03のMIT・両OFL・第三者一覧・旧テーマMIT全文を再利用する。ライセンス中の出典URLは原文テキストであり外部ページへのリンクを作らない。
+- 本番CSPは以下の文字列に固定。`default-src 'none'` から必要項目だけ許可し、書体・JS・CSS・画像は同梱の `'self'`、接続はTauri IPCの `ipc:` とWindows用 `http://ipc.localhost` のみ。外部host・ワイルドカード・`unsafe-eval` はない。プレビューはinline SVG、出力は同一documentのCanvg→Canvas RGBAで外部画像デコーダ・画像URL・Base64を使わないため、`img-src` に `data:`／`blob:` は不要。Svelte本番CSSはViteが外部CSSに抽出し、実行時にスタイルを注入するトーストとインラインstyle指定を除去したため、`style-src` の `unsafe-inline` も不要。Skeletonは本番で使用しない。Tauri標準のCSP nonce／hash付与は無効化しない。`devCsp` だけはViteのローカルHTTP／WSと開発時スタイル注入を許可する。WebViewのnavigationフックもローカルアプリoriginだけを許可し、devのときだけlocalhost:1420を加える。
+
+```text
+default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'
+```
+
+- capabilitiesはlocalのmainだけ。設定4権限（load／save／legacy_available／import_legacy）と既存の画像作成・clipboard画像書込み・resource解放の計7権限。`AppManifest::commands` で独自コマンドをACL管理し、各RustコマンドでもTauriが注入するwindowのlabelを厳密に検査する。saveの型・列挙値・schemaに加え、文字サイズ1〜400・出力1〜4096・手動の実在する正規ISO日付（1873年以降）／自動時nullをRustでも検証。revisionは原文一致、保存先と取込元はRust固定で任意パスを受け取らない。旧値を訂正できる既存の読込・取込契約と未知値保持は維持する。PR-05計測コマンド・clock・handler・追加のmain限定capabilityは `ESTAMP_PR05_MEASURE=1` のビルドだけで有効。通常ビルドでは登録・追加grantなし（生成されるpermission定義の存在だけでは権限を付与しない）。
+- アイコンは指定仕様内で案Aが候補の段階で、リポジトリにデザイン部の確定納品と識別できる成果物がないため既存の画像群を維持。16／32px簡略版・ICO収録・アウトライン化の納品／承認をデザイン部の残作業とする。**長い氏名「国際事業推進部 髙橋渡邊」はPR-05以降100pxで収まるが密集する**ため、文字サイズ・余白・判読性をデザインレビューへ記録するだけとし、印影コードは変更しない。
+- [設定導線の提案](../design/pr06-settings-entry-proposal.md) に初回自動表示／小さな設定ボタンとキーボード操作／トレイ・メニューの3案の利点・欠点・アクセシビリティ・小窓への影響・未決事項を記載。**本PRではいずれも実装しない。** 不要になった `@skeletonlabs/skeleton`／`svelte-french-toast` と既存未使用の `html-to-image` はlock不変の指定を優先して依存宣言を保持し、宣言とlockのオフライン削除を許可された後続作業とする。新規package／crate・ネットワーク取得なし。
+
+Macの検証結果は [開発手順](../development.md#pr-06-ui権限csp) と `outputs/pr06-final1.md` に記録する。JSテストは構造・CSS・本物のAppハンドラーと偽の描画／IPC境界の確認であり、ブラウザーでの実レイアウト・OSのキー配送・実クリップボードを検証したものではない。
+
+**Windows残確認:** [PR-06実機手順](../verification/pr06-windows-check.md) に沿い、DPI100／150／200%、250px幅での2種類の長文エラー全文・スクロール、IME変換／確定、Tab／Shift+Tab・Enter／Space・Narrator、通常releaseのCSP下での同梱書体・画像生成・透過clipboard・設定4操作・版／ライセンス・計測無効・オフラインを確認する。本Mac段階では未実施。PR-05の実ペイント・メモリ再測定等の未確認事項も引き続き残す。正式MSIX manifest・アイコン収集・署名・容量・更新保持はPR-07へ引き継ぎ、本PRで変更しない。
+
+
+2026-10-30 JST 最終検証: Mac ARM64 / macOS 27.2（26B123）、Node 24.22.1、Yarn 1.22.22、Rust／Cargo stable 1.99.1（固定1.95.0は未検証）。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2`、TMPDIRはリポジトリ内のoutputs配下とし、指定5コマンドを順に直列実行してすべて終了コード0。`yarn run check` は診断0 errors／0 warnings、日付10・保存4・App45・書体4・画像8・UI/CSP10＝JS81件合格、Rust28件合格。新しいnative計測分岐もopt-inのcargo checkが成功し、通常設定へ戻したcheckも成功した。Viteに計測フラグの無効値を明示して本番JSから計測コードを除去し、修正後に指定5コマンドを再度順番に完了した。最終distの4TTF・2OFLは原本とバイト一致、HTMLに外部資源・インラインstyleなし、HTML/JS/CSSに外部フォントURLなし、JSに計測用global／command／console文字列なし。生成ACLのmain/local限定と7grant、lock2本のSHA-256不変、印影生成コード・既存アイコン不変、`git diff --check` を確認。Yarn global-folder／Browserslist通知と、共有Rust環境のrust-objcopy／libLLVM.dylib不足によるstrip警告は既存同様に残るがrelease buildは成功。共有toolchainの変更、ネットワーク取得、git add／commit、GUI起動は行っていない。証跡は `outputs/pr06-*.txt` と `outputs/pr06-artifact-audit.json`（未追跡）。Windows・GUIの合否は上記手順へ引き継ぐ。
+
+2026-10-30 JST PR #11 レビュー修正1: 250×120でコピー結果が見えないP2に対応。100px印影枠内の下端に14pxの○成功（1.8秒）／△中止・×失敗（次のコピー操作まで保持）、上端に設定読込・保存エラー／警告と書体エラーの独立表示を追加。既存の詳細段落も維持。通知はクリックを通過し、成功・中止はpolite、失敗はalert／assertive。クラスと抽出CSSだけを使い本番CSPは変更しない。構造・時間・失敗保持・復旧・ARIA・コントラストの回帰テストと、[Windows手順](../verification/pr06-windows-check.md#250120での通知レビュー修正)を追加。指定4検証はすべて終了0（診断0件・JS91件合格）。検証結果は `outputs/pr06-final2.md`（未追跡）、Windowsの実表示・Narratorは引き続き未実施。
+
 ### PR-07：再利用可能な MSIX ビルド・検証手順（1〜1.5 人日）
 
 - **目的:** estamp の MSIX を作り、後続二製品へ同じ工程を渡す。

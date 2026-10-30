@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { parse } from 'svelte/compiler';
 import { get, writable } from 'svelte/store';
 import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
+import { mountApp } from './helpers/appDom.js';
 
 // Execute the production App handlers, including their post-await code. Only the
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
@@ -43,7 +45,19 @@ function app({
   let now = new Date(2025, 11, 31, 23, 59, 59);
   const gate = deferred();
   const reached = deferred();
-  const events = { renders: [], writes: [], closed: 0, success: [], error: [], sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
+  const events = { renders: [], writes: [], closed: 0, sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
+  const timeouts = new Map();
+  let elapsed = 0;
+  let nextTimer = 2;
+  const advanceFeedback = ms => {
+    elapsed += ms;
+    for (const [id, timer] of timeouts) {
+      if (timer.at <= elapsed) {
+        timeouts.delete(id);
+        timer.callback();
+      }
+    }
+  };
   const image = { close: async () => { events.closed++; } };
   const boundary = async stage => {
     if (stage === failAt) throw new Error('検証エラー');
@@ -92,9 +106,7 @@ function app({
     } },
     '@tauri-apps/api/image': { Image: { new: async (rgba, width, height) => { assert.ok(rgba instanceof Uint8Array); assert.equal(rgba.length, width * height * 4); await boundary('image'); return image; } } },
     '@tauri-apps/plugin-clipboard-manager': { writeImage: async value => { assert.equal(value, image); await boundary('write'); events.writes.push(value.svg); } },
-    'svelte-french-toast': {
-      success: message => events.success.push(message), error: message => events.error.push(message),
-    },
+    '../package.json': { version: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version },
     './date.js': {
       ...dates, restoreDate: config => dates.restoreDate(config, now), todayState: () => dates.todayState(now), refreshDate: state => dates.refreshDate(state, now),
     },
@@ -109,7 +121,7 @@ function app({
   };
   context = vm.createContext({
     // Svelte declares these reactive assignment targets when it compiles the DOM.
-    str_date: '', stampSvg: '', imageError: '', requestAnimationFrame: callback => callback(),
+    str_date: '', stampSvg: '', imageError: '', startupIssue: '', requestAnimationFrame: callback => callback(),
     exports: {}, require: name => {
       assert.ok(name in imports, `Unexpected import: ${name}`);
       return imports[name];
@@ -118,6 +130,12 @@ function app({
     window: {
       ...listeners('window'), setInterval: callback => { events.timer = callback; return 1; },
       clearInterval: id => events.cleared.push(id),
+      setTimeout: (callback, delay) => {
+        const id = nextTimer++;
+        timeouts.set(id, { callback, at: elapsed + delay });
+        return id;
+      },
+      clearTimeout: id => timeouts.delete(id),
     },
     document: {
       ...listeners('document'),
@@ -130,10 +148,19 @@ function app({
   // Svelte's $settings assignment writes to the real store, so reintroducing
   // `$settings = config` in App after a save makes the regression test fail.
   Object.defineProperty(context, '$settings', { get: () => get(settings), set: value => settings.set(value) });
-  run(compiled);
+  // Observe assignments, including assigning the same object (which Svelte
+  // still invalidates). Identity assertions alone cannot catch that regression.
+  let dateState;
+  events.dateAssignments = 0;
+  Object.defineProperty(context, 'dateState', {
+    get: () => dateState,
+    set: value => { dateState = value; events.dateAssignments++; },
+  });
+  run(compiled.replace('let dateState =', 'dateState ='));
   run('busy = false; ready = true; fontsReady = true');
   return {
-    settings, events, gate, reached, run, flush, mount: () => mount(),
+    settings, events, gate, reached, run, flush, advanceFeedback, timeouts, mount: () => mount(),
+    recover: () => { failAt = ''; },
     load: () => run('load()'), importLegacy: () => run('importLegacy()'),
     copy: () => run('clipboardCopy()'), save: () => run('save()'),
     edit: input => run(`inputDate({ currentTarget: { value: ${JSON.stringify(input)} } })`),
@@ -156,17 +183,19 @@ for (const pause of ['render', 'image']) {
       ui.gate.resolve();
       await copying;
       assert.deepEqual(ui.events.writes, []);
-      assert.deepEqual(ui.events.success, []);
-      assert.match(ui.events.error[0], /変更.*中止/);
+      assert.match(ui.run('copyMessage'), /変更.*中止/);
       assert.equal(ui.events.closed, 1);
       assert.equal(ui.run('copying'), false);
+      assert.equal(ui.run('copyFeedback'), '△ コピー中止');
+      ui.advanceFeedback(60_000);
+      assert.equal(ui.run('copyFeedback'), '△ コピー中止');
       if (change === 'invalid date') ui.edit('R7.10.22');
       await ui.copy();
       assert.equal(ui.events.writes.length, 1);
       const state = ui.run('dateState');
       assert.ok(ui.events.writes[0].includes(dates.formatStampDate(state.date, get(ui.settings).date_format)));
       assert.equal(ui.events.closed, 2);
-      assert.equal(ui.events.success.length, 1);
+      assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
     });
   }
 }
@@ -182,9 +211,104 @@ test('App copies an unchanged stamp once and releases its image', async () => {
   assert.ok(ui.events.writes[0].includes('2025.12.31'));
   assert.equal(ui.events.writes[0], ui.run('stampSvg'), 'copy uses the computed preview SVG');
   assert.equal(ui.events.closed, 1);
-  assert.deepEqual(ui.events.error, []);
-  assert.equal(ui.events.success.length, 1);
+  assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
   assert.equal(ui.run('copying'), false);
+});
+
+test('copy success badge expires at 1.8 seconds, keeps the paragraph and resets for a new copy', async () => {
+  const ui = app({ pause: '' });
+  await ui.copy();
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  ui.advanceFeedback(1799);
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  await ui.copy();
+  ui.advanceFeedback(1); // The previous copy timer must have been cleared.
+  assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+  ui.advanceFeedback(1799);
+  assert.equal(ui.run('copyFeedback'), '');
+  assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
+});
+
+for (const failAt of ['fonts', 'render', 'image', 'write']) {
+  test(`copy failure at ${failAt} persists until the next attempt, which can succeed`, async () => {
+    const ui = app({ pause: '', failAt });
+    await ui.copy();
+    assert.equal(ui.run('copyFeedback'), '× コピー失敗');
+    assert.match(ui.run('copyMessage'), /^× .*検証エラー/);
+    assert.equal(ui.timeouts.size, 0);
+    ui.advanceFeedback(60_000);
+    assert.equal(ui.run('copyFeedback'), '× コピー失敗');
+    ui.recover();
+    const copying = ui.copy();
+    assert.equal(ui.run('copyFeedback'), '');
+    await copying;
+    assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+    assert.equal(ui.events.writes.length, 1);
+  });
+}
+
+test('unmount clears the success timer and pending copy cannot create feedback after disposal', async () => {
+  const ui = app({ pause: '' });
+  const unmount = ui.mount();
+  await new Promise(setImmediate);
+  await ui.copy();
+  assert.equal(ui.timeouts.size, 1);
+  unmount();
+  assert.equal(ui.timeouts.size, 0);
+
+  const pending = app({ pause: 'write' });
+  const dispose = pending.mount();
+  await new Promise(setImmediate);
+  const copying = pending.copy();
+  await pending.reached.promise;
+  dispose();
+  pending.gate.resolve();
+  await copying;
+  assert.equal(pending.run('copyFeedback'), '');
+  assert.equal(pending.timeouts.size, 0);
+});
+
+test('load/save problems stay visible independently of successful copy and clear after recovery', async () => {
+  for (const operation of ['load', 'save']) {
+    let failing = true;
+    const ui = app({
+      pause: '',
+      read: async () => {
+        if (operation === 'load' && failing) throw new Error('read failed');
+        return { settings: initialSettings(), revision: null, warning: null };
+      },
+      persist: async () => {
+        if (failing) throw new Error('save failed');
+        return 'saved';
+      },
+    });
+    await ui[operation]();
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '× 設定エラー');
+    ui.advanceFeedback(60_000);
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '× 設定エラー');
+    if (operation === 'save') {
+      await ui.copy();
+      assert.equal(ui.run('startupIssue'), '× 設定エラー');
+      assert.equal(ui.run('copyFeedback'), '○ コピー成功');
+    }
+    failing = false;
+    await ui[operation]();
+    await ui.flush();
+    assert.equal(ui.run('startupIssue'), '');
+  }
+});
+
+test('startup indicator also exposes load warnings and font failures', async () => {
+  const ui = app({ read: async () => ({ settings: initialSettings(), revision: null, warning: '△ 設定を退避しました' }) });
+  await ui.load();
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 設定に注意');
+  const fonts = app({ failAt: 'fonts' });
+  await fonts.run('prepareFonts()');
+  await fonts.flush();
+  assert.equal(fonts.run('startupIssue'), '× 書体エラー');
 });
 
 test('App preserves edits after the save handler completes and saves them next time', async () => {
@@ -205,14 +329,13 @@ test('App preserves edits after the save handler completes and saves them next t
   assert.equal(ui.run('revision'), 'saved revision');
   assert.deepEqual(get(ui.settings), edited);
   assert.equal(ui.run('dateState'), editedDate);
-  assert.deepEqual(ui.events.success, []);
   assert.equal(ui.run('dirty'), true);
   assert.match(ui.run('storageMessage'), /未保存の変更があります/);
   await ui.save();
   assert.deepEqual(ui.events.sent[1], { ...edited, date_mode: 'manual', manual_date: '2024-02-29' });
   assert.deepEqual(ui.events.revisions, [null, 'saved revision']);
   assert.equal(ui.run('dirty'), false);
-  assert.deepEqual(ui.events.success, ['保存しました']);
+  assert.equal(ui.run('storageMessage'), '○ 保存しました');
 });
 
 test('App clears the save-during-edit warning when edits revert to the saved values', async () => {
@@ -228,7 +351,6 @@ test('App clears the save-during-edit warning when edits revert to the saved val
   await ui.flush();
   assert.equal(ui.run('dirty'), true);
   assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
-  assert.deepEqual(ui.events.success, []);
 
   ui.settings.set(saved);
   await ui.flush();
@@ -280,7 +402,6 @@ test('App save guards invalid input and preserves edits on failure', async () =>
   assert.match(ui.run('storageMessage'), /保存に失敗/);
   assert.equal(ui.run('revision'), null);
   assert.equal(ui.run('busy'), false);
-  assert.deepEqual(ui.events.success, []);
 });
 
 test('App reports unsaved invalid date input typed during a successful save', async () => {
@@ -293,7 +414,6 @@ test('App reports unsaved invalid date input typed during a successful save', as
   assert.equal(ui.run('revision'), 'saved revision');
   assert.equal(ui.run('dirty'), true);
   assert.match(ui.run('storageMessage'), /未保存/);
-  assert.deepEqual(ui.events.success, []);
 });
 
 test('App waits for fonts before rendering the first copied image', async () => {
@@ -356,6 +476,7 @@ for (const operation of ['load', 'importLegacy']) {
       assert.equal(ui.run('legacyAvailable'), true);
       assert.equal(ui.run('confirmingImport'), false);
       const state = ui.run('dateState');
+      assert.equal(ui.run('dateDraft'), state.input);
       assert.equal(state.mode, mode === 'auto' ? 'auto' : 'manual');
       if (mode === 'invalid manual') {
         assert.ok(state.error);
@@ -477,7 +598,6 @@ for (const failAt of ['fonts', 'render', 'image', 'write']) {
     assert.equal(ui.run('copying'), false);
     assert.equal(ui.events.closed, failAt === 'write' ? 1 : 0);
     assert.equal(ui.events.writes.length, 0);
-    assert.equal(ui.events.error.length, 1);
   });
 }
 
@@ -501,3 +621,184 @@ for (const change of ['top_str', 'btm_str', 'top_font_size', 'mid_font_size', 'b
     assert.equal(ui.events.closed, 1);
   });
 }
+
+// Native buttons translate Enter/Space into click. Test the production click
+// binding and the complete copy handler; the OS key dispatch is checked on Windows.
+test('native Enter/Space activation is bound to the copy handler without duplicate key handlers', async () => {
+  const ast = parse(source.replace(/<script lang="ts">[\s\S]*?<\/script>/, '<script></script>'));
+  const elements = [];
+  const walk = node => {
+    if (node?.type === 'Element') elements.push(node);
+    for (const child of node?.children ?? []) walk(child);
+  };
+  walk(ast.html);
+  const button = elements.find(node => node.name === 'button' && node.attributes.some(a => a.name === 'aria-label' && a.value?.[0]?.data === '印影をコピー'));
+  assert.ok(button);
+  assert.equal(button.attributes.find(a => a.name === 'type').value[0].data, 'button');
+  assert.ok(!button.attributes.some(a => ['role', 'tabindex', 'keydown', 'keyup'].includes(a.name)));
+  const click = button.attributes.find(a => a.type === 'EventHandler' && a.name === 'click');
+  assert.equal(click.expression.type, 'Identifier');
+  for (const key of ['Enter', ' ']) {
+    const ui = app({ pause: '' });
+    await ui.run(`${click.expression.name}()`);
+    assert.equal(ui.events.writes.length, 1, key);
+    assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
+    assert.equal(ui.events.closed, 1);
+  }
+});
+
+test('IME composition defers date validation and blocks save/copy until the committed value', async () => {
+  const ui = app({ pause: '' });
+  const before = ui.run('dateState');
+  ui.run('composing = true');
+  ui.edit('令和');
+  assert.equal(ui.run('dateState'), before);
+  assert.equal(ui.run('dateDraft'), '令和');
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 0);
+  assert.equal(ui.events.sent.length, 0);
+  ui.run("finishComposition({target: {id: 'date-input', value: '令和7年10月22日'}})");
+  assert.equal(ui.run('dateState.date'), '2025-10-22');
+  assert.equal(ui.run('dateDraft'), '令和7年10月22日');
+  assert.equal(ui.run('dateState.error'), '');
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 1);
+  assert.equal(ui.events.sent[0].manual_date, '2025-10-22');
+  // IME input in either name field must not replace the date input.
+  ui.run("composing = true; finishComposition({target: {id: 'top-text', value: '部署名'}})");
+  assert.equal(ui.run('dateState.date'), '2025-10-22');
+});
+
+test('date refresh never assigns unchanged state or any state during composition', async () => {
+  const ui = app({ pause: '' });
+  const dispose = ui.mount();
+  await new Promise(setImmediate);
+  const refresh = () => {
+    ui.events.timer();
+    ui.events.listeners.get('window:focus')();
+    ui.events.listeners.get('document:visibilitychange')();
+  };
+  let assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'same-day refresh must not assign even the same object');
+  ui.run('composing = true');
+  ui.edit('令和');
+  ui.advance(new Date(2026, 0, 1));
+  refresh();
+  ui.run('resetDate()');
+  assert.equal(ui.events.dateAssignments, assignments, 'midnight refresh must wait for composition');
+  assert.equal(ui.run('dateDraft'), '令和');
+  ui.run("finishComposition({target: {id: 'date-input', value: '令和7年10月22日'}})");
+  assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'manual dates must not be reassigned');
+  ui.edit('令和');
+  assignments = ui.events.dateAssignments;
+  refresh();
+  assert.equal(ui.events.dateAssignments, assignments, 'invalid drafts must not be reassigned');
+  ui.run('resetDate()');
+  assert.equal(ui.run('dateDraft'), '2026-01-01');
+  assert.equal(ui.run('dateState.mode'), 'auto');
+  ui.advance(new Date(2026, 0, 2));
+  refresh();
+  assert.equal(ui.run('dateDraft'), '2026-01-02');
+  assert.equal(ui.run('dateState.input'), '2026-01-02');
+  dispose();
+});
+
+for (const committed of ['令和7年10月22日', '令和7年2月29日']) {
+  test(`compiled App retains the date DOM draft across timer/focus/resume and validates ${committed}`, async () => {
+    const ui = await mountApp(initialSettings());
+    try {
+      const input = ui.input('date-input');
+      const confirmation = ui.input('date-confirmation').textContent;
+      input.dispatch('compositionstart');
+      input.nativeValue = '令和';
+      input.dispatch('input', { isComposing: true });
+      const writes = input.valueWrites;
+      await ui.tick();
+      assert.equal(input.valueWrites, writes);
+      for (const midnight of [false, true]) {
+        if (midnight) ui.advance(new Date(2026, 0, 1));
+        ui.timer(); ui.focus(); ui.resume();
+        // Also exercise an unrelated settings-store notification during IME.
+        ui.settings.update(value => ({ ...value, date_format: 'wareki' }));
+        await ui.tick();
+        assert.equal(input.value, '令和');
+        assert.equal(input.valueWrites, writes, 'composition must cause zero programmatic value writes');
+        assert.equal(ui.input('date-confirmation').textContent, confirmation);
+        assert.equal(ui.input('date-error').textContent, '');
+      }
+      input.nativeValue = committed;
+      input.dispatch('compositionend');
+      await ui.tick();
+      assert.equal(input.value, committed);
+      assert.equal(input.valueWrites, writes, 'committed raw text also needs no DOM rewrite');
+      if (committed.includes('2月29日')) {
+        assert.match(ui.input('date-error').textContent, /存在しません/);
+        assert.equal(ui.input('date-confirmation').textContent, confirmation);
+      } else {
+        assert.equal(ui.input('date-error').textContent, '');
+        assert.match(ui.input('date-confirmation').textContent, /令和7年10月22日/);
+      }
+      // Some WebViews send a final input event after compositionend.
+      input.dispatch('input', { isComposing: false });
+      ui.timer();
+      await ui.tick();
+      assert.equal(input.value, committed);
+      assert.equal(input.valueWrites, writes);
+    } finally { ui.destroy(); }
+  });
+}
+
+const otherDrafts = [
+  ...['top-text', 'bottom-text'].map(id => [id, '変換中の文字']),
+  // Native number inputs expose ASCII numeric text or an empty value during an
+  // incomplete edit; full-width IME text is not exposed as their .value.
+  ...['top-size', 'date-size', 'bottom-size', 'output-size'].flatMap(id => [[id, '080'], [id, '']]),
+];
+for (const [id, draft] of otherDrafts) {
+  test(`compiled App preserves IME input ${JSON.stringify(draft)} in ${id} across timer and store updates`, async () => {
+    const ui = await mountApp(initialSettings());
+    try {
+      const input = ui.input(id);
+      input.dispatch('compositionstart');
+      input.nativeValue = draft;
+      input.dispatch('input', { isComposing: true });
+      const writes = input.valueWrites;
+      await ui.tick();
+      ui.advance(new Date(2026, 0, 1));
+      ui.timer();
+      ui.settings.update(value => ({ ...value, date_format: 'wareki' }));
+      await ui.tick();
+      assert.equal(input.value, draft);
+      assert.equal(input.valueWrites, writes);
+      input.dispatch('compositionend');
+      input.dispatch('input', { isComposing: false });
+      ui.timer();
+      await ui.tick();
+      assert.equal(input.value, draft);
+      assert.equal(input.valueWrites, writes);
+      assert.match(ui.input('date-confirmation').textContent, /令和8年1月1日/);
+    } finally { ui.destroy(); }
+  });
+}
+
+for (const [input, message] of [
+  ['H31.5.1', '平成31年5月1日は平成の期間外です。正しい表記は令和元年5月1日です。'],
+  ['1872-01-01', '旧暦は未対応です（1873年1月1日以降を入力してください）。'],
+]) test(`P3 keeps the complete long date error for ${input} and disables output until corrected`, async () => {
+  const ui = app({ pause: '' });
+  const original = ui.run('dateState.date');
+  ui.edit(input);
+  assert.equal(ui.run('dateState.input'), input);
+  assert.equal(ui.run('dateState.error'), message);
+  assert.equal(ui.run('dateState.date'), original);
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 0);
+  assert.equal(ui.events.sent.length, 0);
+  ui.edit('R元.5.1');
+  assert.equal(ui.run('dateState.error'), '');
+  await ui.copy();
+  assert.equal(ui.events.writes.length, 1);
+});

@@ -6,6 +6,23 @@ mod settings;
 use settings::{LoadedSettings, Settings, SettingsStore};
 use tauri::Manager;
 
+fn require_main(label: &str) -> Result<(), String> {
+    if label == "main" {
+        Ok(())
+    } else {
+        Err("この操作はメインウィンドウからのみ実行できます".into())
+    }
+}
+
+// Defense in depth: the ACL also restricts every custom command to local main.
+// The injected window is supplied by Tauri, never by a caller's JSON arguments.
+fn local_navigation(url: &tauri::Url, development: bool) -> bool {
+    let origin = url.origin().ascii_serialization();
+    (url.scheme() == "tauri" && url.host_str() == Some("localhost") && url.port().is_none())
+        || origin == "http://tauri.localhost"
+        || (development && origin == "http://localhost:1420")
+}
+
 fn settings_store(app: &tauri::AppHandle) -> Result<SettingsStore, String> {
     let directory = app
         .path()
@@ -15,16 +32,19 @@ fn settings_store(app: &tauri::AppHandle) -> Result<SettingsStore, String> {
 }
 
 #[tauri::command]
-fn load(app: tauri::AppHandle) -> Result<LoadedSettings, String> {
+fn load(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<LoadedSettings, String> {
+    require_main(window.label())?;
     settings_store(&app)?.load()
 }
 
 #[tauri::command]
 fn save(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     config: Settings,
     revision: Option<String>,
 ) -> Result<String, String> {
+    require_main(window.label())?;
     settings_store(&app)?.save(&config, revision.as_deref())
 }
 
@@ -39,27 +59,30 @@ fn legacy_path() -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
-fn legacy_available() -> Result<bool, String> {
+fn legacy_available(window: tauri::WebviewWindow) -> Result<bool, String> {
+    require_main(window.label())?;
     settings::legacy_available(&legacy_path()?)
 }
 
 #[tauri::command]
 fn import_legacy(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     revision: Option<String>,
 ) -> Result<LoadedSettings, String> {
+    require_main(window.label())?;
     settings_store(&app)?.import_legacy(&legacy_path()?, revision.as_deref())
 }
 
 // Both the frontend and native build must explicitly opt into measurement.
 // No text, dates, settings or caller-selected file paths cross this command.
+#[cfg(pr05_measure)]
 struct Pr05Clock(std::time::Instant);
 
+#[cfg(pr05_measure)]
 #[tauri::command]
-fn pr05_measure(clock: tauri::State<'_, Pr05Clock>, event: String, ms: f64) -> Result<(), String> {
-    if option_env!("ESTAMP_PR05_MEASURE") != Some("1") {
-        return Err("計測用ビルドではありません".into());
-    }
+fn pr05_measure(window: tauri::WebviewWindow, clock: tauri::State<'_, Pr05Clock>, event: String, ms: f64) -> Result<(), String> {
+    require_main(window.label())?;
     if !matches!(event.as_str(), "first-window-paint" | "fonts-ready" | "first-stamp-render")
         || !ms.is_finite() || !(0.0..=3_600_000.0).contains(&ms)
     {
@@ -73,17 +96,58 @@ fn pr05_measure(clock: tauri::State<'_, Pr05Clock>, event: String, ms: f64) -> R
 }
 
 fn main() {
-    let measurement_clock = Pr05Clock(std::time::Instant::now());
-    tauri::Builder::default()
-        .manage(measurement_clock)
+    let builder = tauri::Builder::default()
+        .plugin(tauri::plugin::Builder::<tauri::Wry>::new("local-navigation")
+            .on_navigation(|_, url| local_navigation(url, cfg!(dev)))
+            .build())
+        .plugin(tauri_plugin_clipboard_manager::init());
+    #[cfg(not(pr05_measure))]
+    let builder = builder.invoke_handler(tauri::generate_handler![save, load, import_legacy, legacy_available]);
+    #[cfg(pr05_measure)]
+    let builder = builder
+        .manage(Pr05Clock(std::time::Instant::now()))
+        .setup(|app| {
+            // Fixed, local-main-only grant exists only in the opt-in native build.
+            app.add_capability(r#"{
+                "identifier":"pr05-measurement", "local":true, "windows":["main"],
+                "permissions":["allow-pr05-measure"]
+            }"#)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             save,
             load,
             import_legacy,
             legacy_available,
             pr05_measure
-        ])
-        .plugin(tauri_plugin_clipboard_manager::init())
+        ]);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_exact_main_label_is_allowed() {
+        assert!(require_main("main").is_ok());
+        for label in ["", "settings", "main-child", "MAIN", "*"] {
+            assert!(require_main(label).is_err());
+        }
+    }
+
+    #[test]
+    fn navigation_accepts_only_app_origins_and_the_exact_dev_origin() {
+        for url in ["tauri://localhost/", "http://tauri.localhost/index.html"] {
+            assert!(local_navigation(&url.parse().unwrap(), false));
+        }
+        let dev = "http://localhost:1420/".parse().unwrap();
+        assert!(local_navigation(&dev, true));
+        assert!(!local_navigation(&dev, false));
+        for url in ["https://example.com/", "http://tauri.localhost.evil/", "http://localhost:1421/", "file:///tmp/index.html", "data:text/html,test", "about:blank"] {
+            assert!(!local_navigation(&url.parse().unwrap(), false), "{url}");
+        }
+    }
 }

@@ -63,3 +63,11 @@ busy / ready と日付エラーで操作を制御し、時計のタイマー・f
 PR-00 / PR-04 との統合後の検証結果は [開発・検証手順](development.md) を参照。
 
 Windows CI・実機での rename / OS ロック、GUI での取込確認・キャンセル、再起動・コピー、MSIX 更新保持は未確認。Mac のテスト成功だけで Windows の受入完了とはしない。
+
+## PR-06 のコマンド制限
+
+2026-10-30 JST。独自コマンドも `AppManifest::commands` とmain限定capabilityで管理し、各コマンドでTauriが注入するwindowのlabelが厳密に `main` かを再確認する。フロントの任意文字列でwindowを指定して回避できない。local mainにのみ設定4操作を許可し、remoteや他ウィンドウにはgrantしない。
+
+`save` は書込み前にschema、文字サイズ1〜400、出力1〜4096、手動日付の正規 `YYYY-MM-DD`／実在日／1873-01-01以降、自動時のmanual_date=nullをRustでも検証する。serdeが整数型・文字列型・既存enum値を検証し、revisionは引き続き保存先の原文と比較する。上段・下段の文字列や未知の印影種類は従来どおり保持する。load／legacy_availableはユーザー引数なし、import_legacyはrevisionだけを受け取り固定パスから読み込む。
+
+古い設定の読込・取込は型が正しい既存値を従来どおり返し、不正日付・サイズはUIで訂正する。読込時に新しい保存条件を適用して既存設定を退避・破棄する変更は行わない。PR-06の回帰テストでは不正なIPC保存が既存ファイルを書き換えないことも確認する。

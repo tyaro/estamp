@@ -9,7 +9,7 @@ Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/
 
 License: **OFL-1.1**（全文: [`OFL.txt`](public/fonts/bizudpgothic/OFL.txt)）
 
-UI 本文は Regular (400)、表見出し・ライセンス見出しは Bold (700)。
+UI 本文は Regular (400)、画面見出し・ライセンス見出しは Bold (700)。
 
 取得元: [google/fonts `ofl/bizudpgothic`](https://github.com/google/fonts/tree/6157dfaa640ca5738b4d1a7070fe389c3036d7fc/ofl/bizudpgothic)
 
@@ -53,4 +53,4 @@ Copyright (c) 2022 Skeleton Labs, LLC
 
 License: **MIT**（本体MITとは権利者が異なる。全文: [`licenses/skeleton-LICENSE.txt`](licenses/skeleton-LICENSE.txt)）
 
-`src/theme.css` は lock 済みの npm package `@skeletonlabs/skeleton` v1.0.0 の `themes/theme-skeleton.css` を元に、外部フォントimportを除去し、base / headingの書体変数を同梱BIZ UDPGothicに変更したものです。配色等は維持しています。ソース: https://github.com/skeletonlabs/skeleton 。PR-07では `licenses/skeleton-LICENSE.txt` も同じ相対パスでMSIXへ収集してください。全文はアプリ内「ライセンス」にも含めます。
+PR-03では lock 済みの npm package `@skeletonlabs/skeleton` v1.0.0 の `themes/theme-skeleton.css` を元にしたテーマを使用しました。PR-06では `src/theme.css` を確定したデザイン仕様の色変数へ置き換え、Skeleton CSSのimportとテーマ指定を外しています。旧テーマの出典・MIT原文はPR-03からの権利表記として保持します。ソース: https://github.com/skeletonlabs/skeleton 。PR-07では `licenses/skeleton-LICENSE.txt` も同じ相対パスでMSIXへ収集してください。全文はアプリ内「ライセンス」にも含めます。
