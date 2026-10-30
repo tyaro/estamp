@@ -8,7 +8,7 @@ import { get, writable } from 'svelte/store';
 import { buildStampSvg, hasLongStampLine, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
-import { mountApp } from './helpers/appDom.js';
+import { appCss, mountApp } from './helpers/appDom.js';
 import { bundledStampMetrics } from './helpers/fontMetrics.js';
 
 // Execute the production App handlers, including their post-await code. Only the
@@ -1210,6 +1210,47 @@ test('compiled context menu works on seal, blank area and settings inputs and al
     assert.equal(panelOf(ui).hidden, true);
   } finally { ui.destroy(); }
 });
+
+for (const [entry, keyboard] of [
+  ['right click', null], ['Shift+F10', { key: 'F10', shiftKey: true }],
+  ['menu key', { key: 'ContextMenu' }], ['Apps key', { key: 'Apps' }],
+]) {
+  test(`compiled ${entry} menu focuses the heading with an unconditional focus ring after native completion`, async () => {
+    const pending = deferred();
+    const ui = await mountApp(initialSettings(), { revision: 'saved', native: async command => {
+      if (command === 'set_settings_expanded') await pending.promise;
+    } });
+    try {
+      const seal = sealOf(ui);
+      seal.focus();
+      if (keyboard) ui.keydown(keyboard);
+      else seal.dispatch('contextmenu', { button: 2 });
+      await ui.tick();
+      assert.equal(ui.commands.at(-1).command, 'show_settings_menu');
+      assert.equal(ui.commands.at(-1).args.keyboard, keyboard !== null);
+      await ui.menu('settings');
+      assert.equal(expandCommands(ui).at(-1).args.expanded, true);
+      assert.equal(panelOf(ui).hidden, true, 'wait for Rust geometry and native focus restoration');
+      assert.equal(ui.document.activeElement, seal);
+      pending.resolve(); await ui.tick();
+      const heading = ui.input('settings-heading');
+      assert.equal(panelOf(ui).hidden, false);
+      assert.equal(ui.document.activeElement, heading);
+      assert.equal(heading.getAttribute('tabindex'), '-1');
+      assert.equal(heading.focusOptions.preventScroll, true);
+      // Check the extracted production CSS, including Svelte's scope class on
+      // the actual mounted heading. :focus must not depend on input modality.
+      const ring = appCss.match(/#settings-heading\.(svelte-[\w-]+)(?:\.\1)*:focus\s*\{([^}]+)\}/);
+      assert.ok(ring, 'heading has its own :focus rule, without :focus-visible');
+      assert.ok(heading.getAttribute('class').split(/\s+/).includes(ring[1]));
+      assert.match(ring[2], /outline:\s*2px solid var\(--focus\)/);
+      assert.match(ring[2], /outline-offset:\s*2px/);
+      await ui.menu('settings');
+      assert.equal(panelOf(ui).hidden, true);
+      assert.equal(ui.document.activeElement, seal);
+    } finally { pending.resolve(); ui.destroy(); }
+  });
+}
 
 test('compiled native copy/today actions reuse copy guards and reset date', async () => {
   let copies = 0;

@@ -223,6 +223,13 @@ test('settings entry uses native menu and accessible seal instead of a gear or C
   assert.doesNotMatch(native + windowNative, /TrayIconBuilder|tray_icon/);
 });
 
+test('existing main-only expansion command restores both native window and Webview focus before returning to JS', () => {
+  const command = windowNative.match(/pub fn set_settings_expanded\([\s\S]*?\r?\n\}\r?\n/)[0];
+  assert.match(command, /require_main\(window.label\(\)\)\?;\s*(?:\/\/[^\r\n]*\r?\n\s*)*window\.set_focus\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\s*window\.as_ref\(\)\.set_focus\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;/);
+  assert.ok(command.indexOf('window.as_ref().set_focus()') < command.indexOf('let mut saved'));
+  assert.match(read('src/theme.css'), /--focus:\s*#2563EB;/);
+});
+
 test('first-save guidance stays below the seal in the 120px startup window', () => {
   assert.match(app, /\{#if settingsUnsaved && !settingsOpen\}\s*<p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Alt\+S）<\/p>/);
   assert.match(app, /\{#if settingsUnsaved\}\s*<p class="first-settings" role="status">はじめに氏名などを入力し保存してください<\/p>/);

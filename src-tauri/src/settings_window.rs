@@ -89,6 +89,11 @@ pub fn set_settings_expanded(
     expanded: bool,
 ) -> Result<(), String> {
     super::require_main(window.label())?;
+    // A native popup can leave keyboard focus outside the browser content.
+    // WebviewWindow::set_focus only focuses the outer window in Tauri 2.12.2;
+    // explicitly focus its Webview too, before JS focuses the heading/seal.
+    window.set_focus().map_err(|e| e.to_string())?;
+    window.as_ref().set_focus().map_err(|e| e.to_string())?;
     let mut saved = state.0.lock().map_err(|e| e.to_string())?;
     if expanded && saved.is_none() {
         let original = Geometry {

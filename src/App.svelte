@@ -515,6 +515,8 @@
   }
   .settings-panel, .about { padding: 16px; min-width: 0; }
   h1, h2 { color: var(--primary); font-size: 16px; margin: 0 0 16px; }
+  /* Programmatic focus after a pointer-opened native menu must stay visible. */
+  #settings-heading:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
   .menu { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; }
   legend { font-weight: 700; margin-bottom: 8px; padding: 0; }
   label { margin-top: 8px; }

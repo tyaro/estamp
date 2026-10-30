@@ -14,7 +14,9 @@ const javascript = source.replace(/<script lang="ts">([\s\S]*?)<\/script>/, (_, 
   `<script>${ts.transpileModule(script, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, preserveValueImports: true },
   }).outputText}</script>`);
-const compiled = compile(javascript, { css: false, format: 'cjs' }).js.code;
+const compiledApp = compile(javascript, { css: false, format: 'cjs' });
+const compiled = compiledApp.js.code;
+export const appCss = compiledApp.css.code;
 
 // A minimal DOM boundary for the real Svelte compiler/runtime. Value writes are
 // counted separately from native user edits; this cannot exercise an OS IME.
