@@ -1,0 +1,128 @@
+{
+  "sources": {
+    "simple": "9a73330c4c5685abb8a386db78f0f7bd09b5538dbbdf453b4db863b59d937c62",
+    "full": "bb83aa05bdda3ee909df363c9cd7e2c5b1b5505a9058b7f5871f31d6715d30d0"
+  },
+  "rasters": {
+    "128x128.png": {
+      "source": "full",
+      "sha256": "2439d029719624ed4efd011923d319a438ce17a99f51e113fb597a7ff8d34615"
+    },
+    "128x128@2x.png": {
+      "source": "full",
+      "sha256": "e4afd5b886fc2b0e8885f39bd5c03466584d0b26e3deae3b9011211376e8e6a8"
+    },
+    "32x32.png": {
+      "source": "simple",
+      "sha256": "21ddcf39b8f56e4661a5532519ce2580bdad9d9dac7498887759f3a48ca4212d"
+    },
+    "Square107x107Logo.png": {
+      "source": "full",
+      "sha256": "b921f492c1a4135f1312a7756cf77b72383b81cacef979dd8a1993fec737dfac"
+    },
+    "Square142x142Logo.png": {
+      "source": "full",
+      "sha256": "7a42d7c16a5815be15e1c911281335d8657cfd7628a761dc204f08f2a30d0652"
+    },
+    "Square150x150Logo.png": {
+      "source": "full",
+      "sha256": "dfc02e5716a035aa2295729119ffe377dfda3a62c43377b861a122bdd4475fcb"
+    },
+    "Square284x284Logo.png": {
+      "source": "full",
+      "sha256": "67d230bd0c54da553dd5eb4c4978b083867da5ccb412d0f2192e095773c1b228"
+    },
+    "Square30x30Logo.png": {
+      "source": "simple",
+      "sha256": "c0b2ef9baad50743797edf490f69a4a5c5433db587869986580a430b28521175"
+    },
+    "Square310x310Logo.png": {
+      "source": "full",
+      "sha256": "02712c35f2ef3f11273938902ac4b186e3a7203dd564de8adbf6ee847a37f9f0"
+    },
+    "Square44x44Logo.png": {
+      "source": "simple",
+      "sha256": "d3f22dbc7b05ee9dc15a17cc7371febe064e30e5c65657517d0b7e894bd331c6"
+    },
+    "Square71x71Logo.png": {
+      "source": "full",
+      "sha256": "0ef2e6a8e90e1d2fcd87c9e2b4f925fb4cfb85a7d63c6d153bd7e8bbb8b3a136"
+    },
+    "Square89x89Logo.png": {
+      "source": "full",
+      "sha256": "78ed295787b78795ed0c850064001f2ca4456f122d938124a7d15e36e7743fe4"
+    },
+    "StoreLogo.png": {
+      "source": "full",
+      "sha256": "162dfe8ebbf2a4743575f65fdbe3aff81bedb903dd212f9197439bb0af654c90"
+    },
+    "icon.png": {
+      "source": "full",
+      "sha256": "28b86055ee66f2498e890c82c1efbae0e31642db48898343d5ddadedd0eecbd5"
+    },
+    "ico:16": {
+      "source": "simple",
+      "sha256": "1adbcb8f6945f94c41f8988b5d65bfaddb8195af8491ff81367287f53c9e68fb"
+    },
+    "ico:24": {
+      "source": "simple",
+      "sha256": "f1d22d0f91d7f761b32ba9bfd99fe163d74bb3160735bc3b17cca3fb781f65f4"
+    },
+    "ico:32": {
+      "source": "simple",
+      "sha256": "21ddcf39b8f56e4661a5532519ce2580bdad9d9dac7498887759f3a48ca4212d"
+    },
+    "ico:48": {
+      "source": "full",
+      "sha256": "69d97a4525169231131505bed72b0acfd03ecbbff154c3050ca8ce18e93bcbb4"
+    },
+    "ico:64": {
+      "source": "full",
+      "sha256": "fda2f191a20b5d81dc306a398ac018e02cfeee78e7b7f8e031e095b7d33da1b4"
+    },
+    "ico:256": {
+      "source": "full",
+      "sha256": "e4afd5b886fc2b0e8885f39bd5c03466584d0b26e3deae3b9011211376e8e6a8"
+    },
+    "icns:ic11": {
+      "source": "simple",
+      "sha256": "21ddcf39b8f56e4661a5532519ce2580bdad9d9dac7498887759f3a48ca4212d"
+    },
+    "icns:is32": {
+      "source": "simple",
+      "sha256": "1adbcb8f6945f94c41f8988b5d65bfaddb8195af8491ff81367287f53c9e68fb"
+    },
+    "icns:il32": {
+      "source": "simple",
+      "sha256": "21ddcf39b8f56e4661a5532519ce2580bdad9d9dac7498887759f3a48ca4212d"
+    },
+    "icns:ic12": {
+      "source": "full",
+      "sha256": "fda2f191a20b5d81dc306a398ac018e02cfeee78e7b7f8e031e095b7d33da1b4"
+    },
+    "icns:ic07": {
+      "source": "full",
+      "sha256": "2439d029719624ed4efd011923d319a438ce17a99f51e113fb597a7ff8d34615"
+    },
+    "icns:ic08": {
+      "source": "full",
+      "sha256": "e4afd5b886fc2b0e8885f39bd5c03466584d0b26e3deae3b9011211376e8e6a8"
+    },
+    "icns:ic13": {
+      "source": "full",
+      "sha256": "e4afd5b886fc2b0e8885f39bd5c03466584d0b26e3deae3b9011211376e8e6a8"
+    },
+    "icns:ic09": {
+      "source": "full",
+      "sha256": "28b86055ee66f2498e890c82c1efbae0e31642db48898343d5ddadedd0eecbd5"
+    },
+    "icns:ic14": {
+      "source": "full",
+      "sha256": "28b86055ee66f2498e890c82c1efbae0e31642db48898343d5ddadedd0eecbd5"
+    },
+    "icns:ic10": {
+      "source": "full",
+      "sha256": "8b16199e00019361ab53b65df0cbeeaf1bc8a22b19cc021da2e8a9f33651e586"
+    }
+  }
+}
