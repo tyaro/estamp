@@ -6,6 +6,7 @@ import { writable } from 'svelte/store';
 import ts from 'typescript';
 import * as dates from '../../src/date.js';
 import { settingsSnapshot } from '../../src/save.js';
+import { hasLongStampLine } from '../../src/stampImage.js';
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../../src/App.svelte', import.meta.url), 'utf8');
@@ -40,6 +41,8 @@ class Node {
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   removeAttribute(name) { this.attributes.delete(name); }
+  focus() { this.focused = true; }
+  scrollIntoView() { this.scrolled = true; }
   appendChild(node) { this.insertBefore(node, null); }
   insertBefore(node, anchor) {
     node.parentNode?.removeChild(node);
@@ -71,6 +74,7 @@ export async function mountApp(initialSettings) {
     return node;
   };
   document.createTextNode = data => new Node('#text', String(data));
+  document.createElementNS = (_namespace, name) => document.createElement(name);
   const timers = [];
   const window = new Node('#window');
   window.setInterval = callback => { timers.push(callback); return timers.length; };
@@ -100,7 +104,7 @@ export async function mountApp(initialSettings) {
     './save.js': { settingsSnapshot },
     // Leave the unrelated image/font boundary pending; no HTML parser is needed.
     './fonts.js': { loadStampFonts: () => new Promise(() => {}), loadUiFonts: async () => {} },
-    './stampImage.js': { validateImageSettings() {} },
+    './stampImage.js': { hasLongStampLine, validateImageSettings() {} },
     './performance.js': { markPerformance() {} },
     './Licenses.svelte': { default: Licenses },
     '../package.json': { version: 'test' },

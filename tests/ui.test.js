@@ -16,6 +16,7 @@ const elements = [];
 function walk(node) {
   if (node?.type === 'Element') elements.push(node);
   for (const child of node?.children ?? []) walk(child);
+  if (node?.else) walk(node.else);
 }
 walk(ast.html);
 const attr = (node, name) => node.attributes.find(a => a.name === name);
@@ -120,7 +121,8 @@ test('inputs have visible Japanese labels, native tab order and visible focus', 
     'top-text', 'top-size', 'date-input', 'date-size', 'date-format', 'bottom-text', 'bottom-size', 'output-size',
   ]);
   for (const input of inputs) assert.ok(elements.some(node => node.name === 'label' && literal(node, 'for') === literal(input, 'id')));
-  assert.ok(!elements.some(node => attr(node, 'tabindex')));
+  const focusTargets = elements.filter(node => attr(node, 'tabindex'));
+  assert.deepEqual(focusTargets.map(node => [literal(node, 'id'), literal(node, 'tabindex')]), [['settings-heading', '-1']]);
   assert.match(read('src/app.postcss'), /:focus-visible \{ outline: 2px solid var\(--focus\); outline-offset: 2px;/);
   assert.match(app, /on:compositionstart=\{\(\) => composing = true\} on:compositionend=\{finishComposition\}/);
 });
@@ -204,4 +206,44 @@ test('design palette, type and controls use the PR-2 source values without Skele
   assert.match(read('src/app.postcss'), /input, select \{ border-radius: 4px/);
   assert.match(read('src/app.postcss'), /button \{ border-radius: 8px/);
   assert.doesNotMatch(read('src/main.ts') + read('index.html'), /@skeletonlabs|data-theme|style=/);
+});
+
+test('settings entry is always present with the specified inline icon, dimensions, focus and accessible name', () => {
+  const button = elements.find(node => literal(node, 'class') === 'settings-entry');
+  assert.equal(literal(button, 'aria-label'), '設定');
+  assert.equal(literal(button, 'title'), '設定（Ctrl+,）');
+  assert.equal(literal(button, 'aria-controls'), 'settings-panel');
+  assert.ok(button.attributes.some(a => a.type === 'EventHandler' && a.name === 'click' && a.expression.name === 'openSettings'));
+  assert.ok(ast.html.children.includes(button), 'entry is outside the conditionally hidden settings content');
+  const icon = button.children.find(node => node.name === 'svg');
+  assert.equal(literal(icon, 'width'), '16');
+  assert.equal(literal(icon, 'height'), '16');
+  assert.equal(literal(icon, 'aria-hidden'), 'true');
+  assert.ok(icon.children.some(node => node.name === 'path'));
+  assert.doesNotMatch(markup.slice(button.start, button.end), /<img|<image|style=/);
+  const css = app.match(/\.settings-entry\s*\{([^}]+)\}/)[1];
+  for (const rule of ['position: fixed', 'right: 8px', 'top: 8px', 'width: 32px', 'height: 32px', 'color: #5F6470']) assert.ok(css.includes(rule), rule);
+  assert.match(app, /\.settings-entry:focus-visible \{ outline: 2px solid #2563EB/);
+  assert.match(app, /<div hidden=\{!settingsOpen\}>/);
+  assert.match(app, /<button type="button" on:click=\{closeSettings\}>閉じる<\/button>/);
+  assert.doesNotMatch(native, /TrayIconBuilder|tray_icon/);
+});
+
+test('first-save guidance stays below the seal in the 120px startup window', () => {
+  assert.match(app, /\{#if settingsUnsaved && !settingsOpen\}\s*<p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Ctrl\+,）<\/p>/);
+  assert.match(app, /\{#if settingsUnsaved\}\s*<p class="first-settings" role="status">はじめに氏名などを入力し保存してください<\/p>/);
+  assert.match(app, /\.main.unsaved-startup \{ height: 100px; \}/);
+  assert.match(app, /\.unsaved-settings \{[^}]*line-height: 15px;/);
+  assert.ok(5 + 100 + 15 <= config.app.windows[0].height);
+});
+
+test('long-name warnings are directly beneath their described inputs and use the warning color', () => {
+  for (const [inputId, warningId] of [['top-text', 'top-text-warning'], ['bottom-text', 'bottom-text-warning']]) {
+    const input = byId(inputId), warning = byId(warningId);
+    assert.equal(literal(input, 'aria-describedby'), warningId);
+    assert.equal(elements[elements.indexOf(input) + 1], warning);
+    assert.equal(literal(warning, 'role'), 'status');
+    assert.match(markup.slice(warning.start, warning.end), /△ 8文字を超えるため縮小します。空白で2行に分けられます/);
+  }
+  assert.match(app, /\.text-warning \{ color: #8A5700; \}/);
 });

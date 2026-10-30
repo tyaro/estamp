@@ -7,7 +7,7 @@
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
   import { saveSettings, settingsSnapshot } from './save.js';
   import { loadStampFonts, loadUiFonts } from './fonts.js';
-  import { buildStampSvg, renderStampImage, validateImageSettings } from './stampImage.js';
+  import { buildStampSvg, hasLongStampLine, renderStampImage, validateImageSettings } from './stampImage.js';
   import { markPerformance } from './performance.js';
   import Licenses from './Licenses.svelte';
   import { version } from '../package.json';
@@ -17,6 +17,34 @@
   // Keep the raw IME draft independent of the last validated date.
   let dateDraft = dateState.input;
   let fontsReady = false;
+  let settingsOpen = false;
+  let settingsButton: HTMLButtonElement;
+  let settingsHeading: HTMLHeadingElement;
+  let viewport: HTMLDivElement;
+  let initialLoad = true;
+  let settingsUnsaved = false;
+  const openSettings = async () => {
+    settingsOpen = true;
+    await tick();
+    if (disposed || !settingsOpen) return;
+    settingsHeading?.focus();
+    settingsHeading?.scrollIntoView({ block: 'start' });
+  };
+  const closeSettings = () => {
+    settingsOpen = false;
+    if (viewport) viewport.scrollTop = 0;
+    settingsButton?.focus();
+  };
+  const settingsKeydown = (event: KeyboardEvent) => {
+    if (event.isComposing || composing) return;
+    if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && event.key === ',') {
+      event.preventDefault();
+      void openSettings();
+    } else if (event.key === 'Escape' && settingsOpen) {
+      event.preventDefault();
+      closeSettings();
+    }
+  };
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
   $: stampSvg = fontsReady ? buildStampSvg($settings, str_date) : '';
   $: imageError = (() => {
@@ -111,6 +139,9 @@
     dateDraft = dateState.input;
     savedSnapshot = JSON.stringify(settingsSnapshot($settings, dateState));
     revision = result.revision;
+    // Rust returns null only for an absent file or after successful quarantine.
+    // Valid legacy settings in the config directory already have a revision.
+    settingsUnsaved = result.revision === null;
     storageMessage = result.warning ?? '○ 設定を読み込みました';
     ready = true;
   };
@@ -123,6 +154,7 @@
       const snapshot = JSON.stringify(settingsSnapshot($settings, dateState));
       // Save a snapshot; do not replace edits made while IPC is pending.
       revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
+      settingsUnsaved = false;
       savedSnapshot = snapshot;
       dirty = !!dateState.error || JSON.stringify(settingsSnapshot($settings, dateState)) !== snapshot;
       storageMessage = dirty ? '△ 未保存の変更があります' : '○ 保存しました';
@@ -144,15 +176,19 @@
   };
 
   const load = async () => {
+    const startup = initialLoad;
+    initialLoad = false;
     busy = true;
     try {
       const result = await invoke<LoadedSettings>("load");
       if (disposed) return;
       applyLoaded(result);
+      if (startup && settingsUnsaved) await openSettings();
     } catch (error) {
       if (disposed) return;
       ready = false;
       storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
+      if (startup) await openSettings();
     } finally {
       if (!disposed) {
         await refreshLegacy();
@@ -184,12 +220,14 @@
     void prepareFonts();
     const timer = window.setInterval(refreshToday, 1000);
     window.addEventListener('focus', refreshToday);
+    window.addEventListener('keydown', settingsKeydown);
     document.addEventListener('visibilitychange', refreshToday);
     return () => {
       disposed = true;
       window.clearTimeout(copyFeedbackTimer);
       window.clearInterval(timer);
       window.removeEventListener('focus', refreshToday);
+      window.removeEventListener('keydown', settingsKeydown);
       document.removeEventListener('visibilitychange', refreshToday);
     };
   });
@@ -225,8 +263,15 @@
     }
   };
 </script>
-<div class="app-viewport">
-  <div class="main">
+<button class="settings-entry" type="button" aria-label="設定" title="設定（Ctrl+,）"
+  aria-controls="settings-panel" aria-expanded={settingsOpen} bind:this={settingsButton} on:click={openSettings}>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+    <path d="m9 3-.5 3-2 1-2.8-1L1.7 10l2.4 2-2.4 2 2 4 2.8-1 2 1 .5 3h6l.5-3 2-1 2.8 1 2-4-2.4-2 2.4-2-2-4-2.8 1-2-1L15 3Z"/>
+    <circle cx="12" cy="12" r="3"/>
+  </svg>
+</button>
+<div class="app-viewport" bind:this={viewport}>
+  <div class="main" class:unsaved-startup={settingsUnsaved && !settingsOpen}>
     <div class="stamp-box">
       <button class="stamp-copy" type="button" aria-label="印影をコピー"
         disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
@@ -248,6 +293,10 @@
         role="alert" aria-live="assertive" aria-atomic="true">{startupIssue}</p>
     </div>
   </div>
+  {#if settingsUnsaved && !settingsOpen}
+    <p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Ctrl+,）</p>
+  {/if}
+  <div hidden={!settingsOpen}>
   {#if storageMessage}
     <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
       class:storage-success={storageMessage.startsWith('○')} role="status">{storageMessage}</p>
@@ -260,13 +309,18 @@
     <p class="storage-message" role="alert">{fontMessage}</p>
     <div class="retry"><button type="button" on:click={prepareFonts}>書体を再読込</button></div>
   {/if}
-  <section class="settings-panel" aria-labelledby="settings-heading">
-    <h1 id="settings-heading">印影の設定</h1>
+  <section id="settings-panel" class="settings-panel" aria-labelledby="settings-heading">
+    <h1 id="settings-heading" tabindex="-1" bind:this={settingsHeading}>印影の設定</h1>
+    <button type="button" on:click={closeSettings}>閉じる</button>
+    {#if settingsUnsaved}
+      <p class="first-settings" role="status">はじめに氏名などを入力し保存してください</p>
+    {/if}
     <fieldset class="menu" disabled={busy || !ready}
       on:compositionstart={() => composing = true} on:compositionend={finishComposition}>
       <legend>文字と日付</legend>
       <label for="top-text">上段の文字列</label>
-      <input id="top-text" bind:value={$settings.top_str}>
+      <input id="top-text" aria-describedby="top-text-warning" bind:value={$settings.top_str}>
+      <p id="top-text-warning" class="text-warning" role="status">{hasLongStampLine($settings.top_str) ? '△ 8文字を超えるため縮小します。空白で2行に分けられます' : ''}</p>
       <label for="top-size">上段の文字サイズ</label>
       <input id="top-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.top_font_size}>
 
@@ -288,7 +342,8 @@
       </select>
 
       <label for="bottom-text">下段の文字列</label>
-      <input id="bottom-text" bind:value={$settings.btm_str}>
+      <input id="bottom-text" aria-describedby="bottom-text-warning" bind:value={$settings.btm_str}>
+      <p id="bottom-text-warning" class="text-warning" role="status">{hasLongStampLine($settings.btm_str) ? '△ 8文字を超えるため縮小します。空白で2行に分けられます' : ''}</p>
       <label for="bottom-size">下段の文字サイズ</label>
       <input id="bottom-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.btm_font_size}>
       <p id="size-help" class="hint">文字サイズ：1〜400の整数。印影に収まるよう自動調整します。</p>
@@ -321,9 +376,28 @@
     <p>発行元：Banto Works</p>
     <Licenses />
   </section>
+  </div>
 </div>
 
 <style>
+  .settings-entry {
+    position: fixed;
+    right: 8px;
+    top: 8px;
+    width: 32px;
+    height: 32px;
+    padding: 8px;
+    border: 0;
+    color: #5F6470;
+    z-index: 1;
+  }
+  .settings-entry svg { display: block; }
+  .settings-entry:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
+  .main.unsaved-startup { height: 100px; }
+  .unsaved-settings { padding: 0 8px; text-align: center; line-height: 15px; }
+  .first-settings { margin: 8px 0; }
+  .text-warning { color: #8A5700; }
+  .text-warning:empty { display: none; }
   /* Preserve the seal-only startup area, including its existing 5px top gap. */
   .main {
     text-align: center;

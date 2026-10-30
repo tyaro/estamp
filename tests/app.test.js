@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { parse } from 'svelte/compiler';
 import { get, writable } from 'svelte/store';
-import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
+import { buildStampSvg, hasLongStampLine, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
 import { mountApp } from './helpers/appDom.js';
@@ -113,7 +113,7 @@ function app({
     './save.js': { saveSettings, settingsSnapshot },
     './fonts.js': { loadStampFonts: async () => { await boundary('fonts'); }, loadUiFonts: async () => {} },
     './performance.js': { markPerformance() {} },
-    './stampImage.js': { buildStampSvg, validateImageSettings, renderStampImage: async (text, size) => {
+    './stampImage.js': { buildStampSvg, hasLongStampLine, validateImageSettings, renderStampImage: async (text, size) => {
       await boundary('fonts');
       events.renders.push(text); image.svg = text; await boundary('render');
       return { rgba: new Uint8Array(size * size * 4), width: size, height: size };
@@ -167,6 +167,102 @@ function app({
     advance: value => { now = value; },
   };
 }
+
+function settingsFocus(ui) {
+  ui.run(`
+    const focusCalls = [];
+    settingsHeading = { focus: () => focusCalls.push('heading'), scrollIntoView: () => focusCalls.push('scroll') };
+    settingsButton = { focus: () => focusCalls.push('button') };
+    viewport = { scrollTop: 400 };
+  `);
+}
+
+test('first launch opens and focuses settings; closing without save repeats on restart', async () => {
+  for (let launch = 0; launch < 2; launch++) {
+    const ui = app();
+    settingsFocus(ui);
+    await ui.load();
+    assert.equal(ui.run('settingsOpen'), true);
+    assert.equal(ui.run('settingsUnsaved'), true);
+    assert.equal(ui.run("focusCalls.join(',')"), 'heading,scroll');
+    ui.run('closeSettings()');
+    assert.equal(ui.run('settingsOpen'), false);
+    assert.equal(ui.run('settingsUnsaved'), true);
+    assert.equal(ui.run('viewport.scrollTop'), 0);
+    assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+    assert.equal(ui.events.sent.length, 0);
+  }
+});
+
+test('successful save/import ends first-launch guidance; saved and legacy revisions stay closed', async () => {
+  const ui = app({ pause: '' });
+  await ui.load();
+  await ui.save();
+  assert.equal(ui.run('settingsUnsaved'), false);
+  for (const revision of ['saved JSON', 'legacy JSON without schema']) {
+    const restarted = app({ read: async () => ({ settings: initialSettings(), revision, warning: null }) });
+    await restarted.load();
+    assert.equal(restarted.run('settingsOpen'), false);
+    assert.equal(restarted.run('settingsUnsaved'), false);
+  }
+  const imported = app({ legacyAvailable: async () => true,
+    importLegacy: async () => ({ settings: initialSettings(), revision: 'imported JSON', warning: null }) });
+  await imported.load();
+  imported.run('confirmingImport = true');
+  await imported.importLegacy();
+  assert.equal(imported.run('settingsUnsaved'), false);
+});
+
+test('quarantine prompts first save while hard load failure opens recovery without declaring absence', async () => {
+  const corrupt = app({ read: async () => ({ settings: initialSettings(), revision: null, warning: '△ 破損を退避しました' }) });
+  await corrupt.load();
+  assert.equal(corrupt.run('settingsOpen && settingsUnsaved'), true);
+  assert.match(corrupt.run('storageMessage'), /退避/);
+  const broken = app({ read: async () => { throw new Error('permission denied'); } });
+  await broken.load();
+  assert.equal(broken.run('settingsOpen'), true);
+  assert.equal(broken.run('settingsUnsaved'), false);
+  assert.equal(broken.run('ready'), false);
+  const failedSave = app({ persist: async () => { throw new Error('disk full'); } });
+  await failedSave.load();
+  await failedSave.save();
+  assert.equal(failedSave.run('settingsUnsaved'), true);
+});
+
+test('Ctrl+, opens settings and Escape/close return focus; IME and unrelated keys are ignored', async () => {
+  const ui = app({ read: async () => ({ settings: initialSettings(), revision: 'saved', warning: null }) });
+  settingsFocus(ui);
+  const cleanup = ui.mount();
+  await new Promise(setImmediate);
+  const keydown = ui.events.listeners.get('window:keydown');
+  let prevented = 0;
+  const key = properties => keydown({ key: ',', ctrlKey: true, preventDefault: () => prevented++, ...properties });
+  for (const properties of [{ ctrlKey: false }, { altKey: true }, { shiftKey: true }, { metaKey: true }, { isComposing: true }]) key(properties);
+  assert.equal(ui.run('settingsOpen'), false);
+  key({});
+  await new Promise(setImmediate);
+  assert.equal(ui.run('settingsOpen'), true);
+  assert.equal(prevented, 1);
+  assert.equal(ui.run('focusCalls.at(-2)'), 'heading');
+  key({ key: 'Escape', ctrlKey: false });
+  assert.equal(ui.run('settingsOpen'), false);
+  assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+  key({}); await new Promise(setImmediate);
+  ui.run('closeSettings()');
+  assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+  cleanup();
+  assert.equal(ui.events.listeners.has('window:keydown'), false);
+});
+
+test('long text warnings leave save and copy enabled', async () => {
+  const ui = app({ pause: '' });
+  ui.settings.update(value => ({ ...value, top_str: '国際事業推進部門室', btm_str: '国際事業推進部 髙橋渡邊' }));
+  await ui.flush();
+  assert.equal(ui.run('imageError'), '');
+  await ui.save(); await ui.copy();
+  assert.equal(ui.events.sent.length, 1);
+  assert.equal(ui.events.writes.length, 1);
+});
 
 for (const pause of ['render', 'image']) {
   for (const change of ['valid date', 'format', 'invalid date', 'midnight', 'output size']) {
@@ -569,7 +665,7 @@ test('App removes date watchers and ignores a load completing after unmount', as
   const before = get(ui.settings);
   ui.run('busy = true; ready = false');
   const cleanup = ui.mount();
-  assert.equal(ui.events.listeners.size, 2);
+  assert.equal(ui.events.listeners.size, 3);
   ui.advance(new Date(2026, 0, 1));
   ui.events.timer();
   assert.equal(ui.run('dateState.date'), '2026-01-01');

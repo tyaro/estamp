@@ -24,37 +24,67 @@ export function validateImageSettings(settings) {
   }
 }
 
+/** Split at a half/full-width space, balancing multiple separators into two lines. */
+export function splitStampText(text) {
+  const words = String(text).trim().split(/[ \u3000]+/);
+  if (words.length < 2) return words;
+  let split = 1;
+  let difference = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const next = Math.abs(Array.from(words.slice(0, i).join(' ')).length
+      - Array.from(words.slice(i).join(' ')).length);
+    if (next < difference) { split = i; difference = next; }
+  }
+  return [words.slice(0, split).join(' '), words.slice(split).join(' ')];
+}
+
+export const hasLongStampLine = text => splitStampText(text).some(line => Array.from(line).length > 8);
+
 /** One source for the inline preview and the Canvas renderer. No external SVG image
  * is created: Canvg draws text with this document's loaded FontFaceSet. This avoids
  * losing CSS fonts in an Image decoder and re-embedding ~30MB on every click.
  *
- * Call after loadStampFonts. Each row is uniformly reduced to its vertical band,
- * then compressed horizontally. The corner of each band stays inside the circle's
- * inner radius (184); the dividers at 155/245 also have clearance. Requested sizes
- * remain unchanged in settings. The conservative fallback is for DOM-free tests.
+ * Call after loadStampFonts. Reduce uniformly to the vertical band, compress
+ * horizontally by at most 25%, then reduce uniformly again if necessary.
+ * The bands stay inside the circle's inner radius (184). Stop automatic shrinking
+ * at 9px ink height in the 100px preview (36 viewBox units). Extremely long lines
+ * can exceed the band at that limit; space-separated names can use two lines.
+ * Explicitly smaller requested sizes are not enlarged. Settings stay unchanged.
+ * The conservative fallback is for DOM-free tests.
  * @param {import('./store').Setting} settings
  * @param {string} date
  * @param {{ context?: Pick<CanvasRenderingContext2D, 'font' | 'textAlign' | 'textBaseline' | 'measureText'> | null }} options
  */
 export function buildStampSvg(settings, date, { context = getMeasurementContext() } = {}) {
-  const row = (text, size, weight, y, bandWidth, bandHeight) => {
+  const row = (texts, size, weight, y, bandWidth, bandHeight) => {
     if (context) {
       context.font = `${weight} ${size}px "${STAMP_FONT}"`;
       context.textAlign = 'center';
       context.textBaseline = 'alphabetic';
     }
-    const metrics = context?.measureText(text);
-    // Include ink overhangs as well as the advance width, relative to the center.
-    const width = Math.max(metrics?.width ?? Array.from(text).length * size * 1.2,
-      2 * (metrics?.actualBoundingBoxLeft ?? 0), 2 * (metrics?.actualBoundingBoxRight ?? 0));
-    const ascent = metrics?.actualBoundingBoxAscent ?? size * 0.9;
-    const descent = metrics?.actualBoundingBoxDescent ?? size * 0.3;
-    const fit = Math.min(1, bandHeight / Math.max(size, ascent + descent));
-    const scaleX = Math.min(fit, bandWidth / (width || 1));
-    const baseline = y + (ascent - descent) * fit / 2;
-    return `<text font-family="'${STAMP_FONT}'" font-weight="${weight}" font-size="${size}" transform="translate(200 ${baseline}) scale(${scaleX} ${fit})" x="0" y="0" fill="#C74332" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(text)}</text>`;
+    const lines = texts.map(text => {
+      const metrics = context?.measureText(text);
+      // Include ink overhangs as well as the advance width, relative to the center.
+      return { text, width: Math.max(metrics?.width ?? Array.from(text).length * size * 1.2,
+        2 * (metrics?.actualBoundingBoxLeft ?? 0), 2 * (metrics?.actualBoundingBoxRight ?? 0)),
+      ascent: metrics?.actualBoundingBoxAscent ?? size * 0.9,
+      descent: metrics?.actualBoundingBoxDescent ?? size * 0.3 };
+    });
+    const lineHeight = (bandHeight - (lines.length - 1) * 4) / lines.length;
+    const height = Math.max(...lines.map(line => line.ascent + line.descent), 1);
+    const width = Math.max(...lines.map(line => line.width), 1);
+    let fit = Math.min(1, lineHeight / height);
+    const compression = Math.max(0.75, Math.min(1, bandWidth / (width * fit)));
+    const inkHeights = lines.map(line => line.ascent + line.descent).filter(height => height > 0);
+    const minimumFit = Math.min(1, 36 / (Math.min(...inkHeights) || height));
+    fit = Math.max(minimumFit, Math.min(fit, bandWidth / (width * compression)));
+    return lines.map((line, index) => {
+      const center = y + (index - (lines.length - 1) / 2) * (lineHeight + 4);
+      const baseline = center + (line.ascent - line.descent) * fit / 2;
+      return `<text font-family="'${STAMP_FONT}'" font-weight="${weight}" font-size="${size}" transform="translate(200 ${baseline}) scale(${fit * compression} ${fit})" x="0" y="0" fill="#C74332" text-anchor="middle" dominant-baseline="alphabetic">${escapeXml(line.text)}</text>`;
+    }).join('');
   };
-  return `<svg id="stamp" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400"><circle stroke="#C74332" cx="200" cy="200" r="192" fill="none" stroke-width="16"/><path d="M20 155H380 M20 245H380" fill="none" stroke="#C74332" stroke-width="5"/>${row(settings.top_str, settings.top_font_size, 700, 100, 220, 80)}${row(date, settings.mid_font_size, 400, 200, 340, 70)}${row(settings.btm_str, settings.btm_font_size, 700, 300, 220, 80)}</svg>`;
+  return `<svg id="stamp" xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 400 400"><circle stroke="#C74332" cx="200" cy="200" r="192" fill="none" stroke-width="16"/><path d="M20 155H380 M20 245H380" fill="none" stroke="#C74332" stroke-width="5"/>${row(splitStampText(settings.top_str), settings.top_font_size, 700, 100, 220, 80)}${row([date], settings.mid_font_size, 400, 200, 340, 70)}${row(splitStampText(settings.btm_str), settings.btm_font_size, 700, 300, 220, 80)}</svg>`;
 }
 
 /** Await fonts, all renderer resources and drawing, then read RGBA. Canvas stays

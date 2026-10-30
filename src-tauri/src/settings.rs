@@ -138,7 +138,8 @@ fn valid_manual_date(date: &str) -> bool {
 #[derive(Debug, Serialize)]
 pub struct LoadedSettings {
     pub settings: Settings,
-    // Opaque compare-and-swap token: the previous file contents, or null if absent.
+    // Opaque compare-and-swap token: the previous file contents, or null if absent
+    // (including after quarantine). The UI also uses this for first-save guidance.
     // Comparing bytes avoids hash collisions and does not require another dependency.
     pub revision: Option<String>,
     pub warning: Option<String>,
@@ -643,6 +644,30 @@ mod tests {
         assert!(store.directory.is_dir());
         assert!(!store.path().exists());
         assert!(source.exists());
+    }
+
+    #[test]
+    fn revision_marks_first_save_across_restart_legacy_load_and_quarantine() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        assert!(store.load().unwrap().revision.is_none());
+        // Closing the UI without save does not create a settings file.
+        assert!(directory.store().load().unwrap().revision.is_none());
+        store.save(&Settings::default(), None).unwrap();
+        assert!(directory.store().load().unwrap().revision.is_some());
+        // An already installed legacy file counts as saved, without rewriting it.
+        fs::write(store.path(), LEGACY_JSON).unwrap();
+        assert!(store.load().unwrap().revision.is_some());
+        fs::write(store.path(), b"{ broken").unwrap();
+        let recovered = store.load().unwrap();
+        assert!(recovered.revision.is_none());
+        assert!(recovered.warning.unwrap().contains("退避"));
+        assert!(directory.store().load().unwrap().revision.is_none());
+        let source = directory.0.join("legacy.json");
+        fs::write(&source, LEGACY_JSON).unwrap();
+        assert!(store.import_legacy(&source, None).unwrap().revision.is_some());
+        assert!(directory.store().load().unwrap().revision.is_some());
+        assert_eq!(fs::read(source).unwrap(), LEGACY_JSON);
     }
 
     #[test]
