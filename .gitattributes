@@ -5,3 +5,4 @@ public/fonts/** -text
 # Verification scripts are UTF-8 with BOM for Windows PowerShell 5.1.
 # Keep their bytes unchanged in Git; preserve the BOM when editing as well.
 scripts/verify/*.ps1 -text
+docs/design/icon/*.svg -text
