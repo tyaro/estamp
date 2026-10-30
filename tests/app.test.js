@@ -396,6 +396,38 @@ test('load/save problems stay visible independently of successful copy and clear
   }
 });
 
+test('compiled App shows save failure and unsaved warning immediately after Save, then success on retry', async () => {
+  let failing = true;
+  const ui = await mountApp(initialSettings(), { persist: async () => {
+    if (failing) throw new Error('書込み不可');
+    return 'saved revision';
+  } });
+  try {
+    ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+    await ui.tick();
+    const save = ui.button('保存');
+    const messages = () => save.parentNode.childNodes.slice(save.parentNode.childNodes.indexOf(save) + 1)
+      .filter(node => node.nodeName === 'P');
+    assert.ok(messages().some(node => node.textContent === '△ 未保存の変更があります'));
+    save.dispatch('click');
+    await new Promise(setImmediate);
+    await ui.tick();
+    assert.ok(messages().length >= 2, 'failure result and unsaved warning stay next to Save');
+    assert.match(messages()[0].textContent, /^× 保存に失敗しました：.*書込み不可/);
+    assert.equal(messages()[0].getAttribute('role'), 'alert');
+    assert.equal(messages()[1].textContent, '△ 未保存の変更があります');
+    assert.equal(messages()[1].getAttribute('role'), 'status');
+    assert.equal(ui.input('top-text').value, '営業部');
+    failing = false;
+    save.dispatch('click');
+    await new Promise(setImmediate);
+    await ui.tick();
+    assert.equal(messages()[0].textContent, '○ 保存しました');
+    assert.equal(messages()[0].getAttribute('role'), 'status');
+    assert.equal(messages().length, 1, 'successful save clears the unsaved warning');
+  } finally { ui.destroy(); }
+});
+
 test('startup indicator also exposes load warnings and font failures', async () => {
   const ui = app({ read: async () => ({ settings: initialSettings(), revision: null, warning: '△ 設定を退避しました' }) });
   await ui.load();

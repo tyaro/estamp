@@ -5,7 +5,7 @@ import { compile } from 'svelte/compiler';
 import { writable } from 'svelte/store';
 import ts from 'typescript';
 import * as dates from '../../src/date.js';
-import { settingsSnapshot } from '../../src/save.js';
+import { saveSettings, settingsSnapshot } from '../../src/save.js';
 import { hasLongStampLine } from '../../src/stampImage.js';
 
 const require = createRequire(import.meta.url);
@@ -64,7 +64,7 @@ class Node {
   }
 }
 
-export async function mountApp(initialSettings) {
+export async function mountApp(initialSettings, { persist = async config => JSON.stringify(config) } = {}) {
   let now = new Date(2025, 11, 31, 23, 59, 59);
   const elements = [];
   const document = new Node('#document');
@@ -101,15 +101,16 @@ export async function mountApp(initialSettings) {
       restoreDate: config => dates.restoreDate(config, now),
       refreshDate: state => dates.refreshDate(state, now),
     },
-    './save.js': { settingsSnapshot },
+    './save.js': { saveSettings, settingsSnapshot },
     // Leave the unrelated image/font boundary pending; no HTML parser is needed.
     './fonts.js': { loadStampFonts: () => new Promise(() => {}), loadUiFonts: async () => {} },
     './stampImage.js': { hasLongStampLine, validateImageSettings() {} },
     './performance.js': { markPerformance() {} },
     './Licenses.svelte': { default: Licenses },
     '../package.json': { version: 'test' },
-    '@tauri-apps/api/core': { invoke: async command => command === 'load'
-      ? { settings: initialSettings, revision: null, warning: null } : false },
+    '@tauri-apps/api/core': { invoke: async (command, args) => command === 'load'
+      ? { settings: initialSettings, revision: null, warning: null }
+      : command === 'save' ? persist(args.config) : false },
     '@tauri-apps/api/image': {},
     '@tauri-apps/plugin-clipboard-manager': {},
   };
@@ -126,6 +127,7 @@ export async function mountApp(initialSettings) {
   await runtime.tick();
   return {
     input: id => elements.find(node => node.id === id), settings,
+    button: text => elements.find(node => node.nodeName === 'BUTTON' && node.textContent === text),
     tick: runtime.tick, timer: () => timers[0](),
     focus: () => window.dispatch('focus'),
     resume: () => document.dispatch('visibilitychange'),

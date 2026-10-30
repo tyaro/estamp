@@ -52,6 +52,37 @@ test('fitting stages uniformly shrink, then compress, then uniformly shrink with
     assert.ok(Number(sy) <= 80 / 96);
   }
 });
+
+for (const text of ['営業部 aaa', '営業部 。']) {
+  test(`mixed-height bundled glyphs stay in separate line slots and vertical bands: ${text}`, t => {
+    const context = bundledStampMetrics();
+    for (const value of [text, splitStampText(text).reverse().join(' ')]) {
+      const svg = buildStampSvg({ ...config, top_str: value, btm_str: value }, '2025.10.22', { context });
+      const rows = [...svg.matchAll(/font-size="([\d.]+)" transform="translate\(200 ([\d.e+-]+)\) scale\(([\d.e+-]+) ([\d.e+-]+)\)"[^>]*>([^<]*)<\/text>/g)];
+      assert.equal(rows.length, 5);
+      for (const [start, bandTop] of [[0, 60], [3, 260]]) {
+        const bounds = rows.slice(start, start + 2).map(([, size, baseline, sx, sy, line]) => {
+          context.font = `700 ${size}px "${STAMP_FONT}"`;
+          const metrics = context.measureText(line);
+          assert.ok(Number(sx) / Number(sy) >= 0.75);
+          return {
+            top: Number(baseline) - metrics.actualBoundingBoxAscent * Number(sy),
+            bottom: Number(baseline) + metrics.actualBoundingBoxDescent * Number(sy),
+          };
+        });
+        t.diagnostic(`${value}, band y=${bandTop}..${bandTop + 80}: ${JSON.stringify(bounds)}`);
+        for (const [index, { top, bottom }] of bounds.entries()) {
+          const slotTop = bandTop + index * 42;
+          assert.ok(top >= slotTop - 1e-9, `line ${index + 1} top ${top} >= ${slotTop}`);
+          assert.ok(bottom <= slotTop + 38 + 1e-9, `line ${index + 1} bottom ${bottom} <= ${slotTop + 38}`);
+        }
+        assert.ok(bounds[0].bottom + 4 <= bounds[1].top + 1e-9, 'two lines keep at least a 4-unit gap');
+        assert.ok(Math.max(...bounds.map(({ top, bottom }) => (bottom - top) / 4)) >= 9);
+      }
+    }
+  });
+}
+
 function deferred() {
   let resolve;
   const promise = new Promise(ok => { resolve = ok; });

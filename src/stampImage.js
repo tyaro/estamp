@@ -75,8 +75,9 @@ export function buildStampSvg(settings, date, { context = getMeasurementContext(
     const width = Math.max(...lines.map(line => line.width), 1);
     let fit = Math.min(1, lineHeight / height);
     const compression = Math.max(0.75, Math.min(1, bandWidth / (width * fit)));
-    const inkHeights = lines.map(line => line.ascent + line.descent).filter(height => height > 0);
-    const minimumFit = Math.min(1, 36 / (Math.min(...inkHeights) || height));
+    // Base the shared floor on the tallest line so shorter glyphs cannot force
+    // another line beyond its vertical slot or into its neighbour.
+    const minimumFit = Math.min(1, 36 / height);
     fit = Math.max(minimumFit, Math.min(fit, bandWidth / (width * compression)));
     return lines.map((line, index) => {
       const center = y + (index - (lines.length - 1) / 2) * (lineHeight + 4);

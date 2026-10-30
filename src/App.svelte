@@ -353,7 +353,12 @@
     </fieldset>
     <p id="image-error" class="date-error" role="alert">{imageError}</p>
     <button class="save" type="button" disabled={composing || busy || !ready || !!dateState.error || !!imageError} on:click={save}>保存</button>
-    {#if dirty && (!storageMessage || storageMessage.startsWith('○'))}
+    {#if storageMessage}
+      <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
+        class:storage-success={storageMessage.startsWith('○')}
+        role={storageMessage.startsWith('×') ? 'alert' : 'status'}>{storageMessage}</p>
+    {/if}
+    {#if (dirty || settingsUnsaved) && storageMessage !== '△ 未保存の変更があります'}
       <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
     {/if}
     <div class="storage-actions">
