@@ -89,7 +89,7 @@ test('measurement command, clock, handler and extra capability are gated from no
   const normal = native.match(/#\[cfg\(not\(pr05_measure\)\)\]([\s\S]*?)#\[cfg\(pr05_measure\)\]/)[1];
   assert.doesNotMatch(normal, /pr05_measure|Pr05Clock|add_capability/);
   assert.match(native, /#\[cfg\(pr05_measure\)\]\s*let builder = builder[\s\S]*?add_capability/);
-  const source = read('src/performance.js').replace(/^import .*;\n/m, '')
+  const source = read('src/performance.js').replace(/^import .*;\r?\n/m, '')
     .replaceAll('import.meta.env.DEV', 'false').replaceAll("import.meta.env.VITE_PR05_MEASURE", 'undefined')
     .replace('export function', 'function');
   vm.runInNewContext(`${source}\nmarkPerformance('fonts-ready')`, {
