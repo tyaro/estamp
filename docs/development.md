@@ -132,14 +132,28 @@ PR-05の画像品質・Windows WebView2/DPI/オフライン実機確認、PR-07�
 
 ## PR-05 画像出力とWindowsへの引継ぎ
 
-`src/stampImage.js` が共通SVGを生成し、プレビューはinline SVG、出力は同じSVGをCanvgで同一documentのCanvasへ描画する。書体ロード→Canvg描画完了→`toBlob(image/png)` 完了の順。外部SVG画像へのCSS書体継承に依存せず、同梱TTFの再Base64化を避ける。PNGは独立ファイル保存UIを追加せずモジュール内で生成し、OSへはRGBA `Uint8Array` と縦横pxを `Image.new` に渡す。clipboard-manager 2.3.0はImage resourceを受け取るため `writeImage(image)` 後に `close()` する。権限は画像書込みのみ。OS側が実際に公開するPNG/DIB等は実機で別途記録する。
+`src/stampImage.js` が共通SVGを生成し、プレビューはinline SVG、出力は同じSVGをCanvgで同一documentのCanvasへ描画する。書体ロード→Canvg描画完了→CanvasのRGBA取得の順。外部SVG画像へのCSS書体継承に依存せず、同梱TTFの再Base64化を避ける。アプリ内でPNGエンコードは行わず、OSへはRGBA `Uint8Array` と縦横pxを `Image.new` に渡す。clipboard-manager 2.3.0はImage resourceを受け取るため `writeImage(image)` 後に `close()` する。権限は画像書込みのみ。OS側が実際に公開するPNG/DIB等は実機で別途記録する。
 
 書体名はCSS上の別名 `estamp Shippori Mincho B1` / `estamp BIZ UDPGothic` に統一した。Windowsの同名プリインストール書体へフォールバックしないよう `local()` は使わず、元のTTF/OFLを変更しない。日付文字サイズも編集可能。文字サイズ1〜400・出力1〜4096pxの整数を検証し、空欄/範囲外では保存・コピーを止める。
 
-`tests/stampImage.test.js` は注入したCanvas/renderer境界で50/100/200px、alphaデータの保持、font→draw→PNGの順序、エラー、clipboard payloadと権限・Base64なしを検査する。Appテストは本物のハンドラーでsingle-flight、画像生成／Image.new中の変更中止、コピー各段階の日本語エラー・リソース解放を確認する。これらは実WebViewのラスタライズやWindowsクリップボードを代替しない。
+`tests/stampImage.test.js` は注入したCanvas/renderer境界で50/100/200px、alphaデータの保持、font→draw→RGBAの順序、エラー、clipboard payloadと権限・Base64なしを検査する。Appテストは本物のハンドラーでsingle-flight、画像生成／Image.new中の変更中止、コピー各段階の日本語エラー・リソース解放を確認する。これらは実WebViewのラスタライズやWindowsクリップボードを代替しない。
 
 計測フックはdev、またはフロントビルドの `VITE_PR05_MEASURE=1` で有効。marksは `estamp:first-window-paint` / `estamp:fonts-ready` / `estamp:first-stamp-render`、値は `window.__estampPerformance` とconsoleに出る。ファイルへの出力はRustも `ESTAMP_PR05_MEASURE=1` でビルドした場合だけで、実行時 `ESTAMP_PR05_METRICS` にハーネスが指定した場所へ固定イベント名・navigation ms・Rust main開始からのmsを出力する。氏名・日付等は出さない。通常配布ビルドでは両ビルド環境変数を外す。
 
 [Windows 11実機確認](verification/pr05-windows-check.md) とPowerShell3本が引継ぎ先。再起動後の3コールドスタートとキャッシュの残るプロセス再起動を区別し、実ペイントと二重rAF近似、navigationとnative mainの開始基準も区別する。メモリはestampと子WebView2の合計・各PIDのWorking Set/private bytesを保存。既存設定ディレクトリがあれば計測スクリプトは停止し、検証専用ユーザーを使用する。
 
 2026-10-30 JST PR-05 Mac最終検証: Mac ARM64 / macOS 27.2 (26B123) / Node 24.22.1 / Yarn 1.22.22 / Rust・Cargo 1.99.1。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2`、各コマンドを直列実行。`yarn run check`（0 errors / 0 warnings、日付10・保存4・App41・書体4・画像6＝JS65件）、`cargo check`、`cargo test`（24件）、`yarn build`、Tauri `build --no-bundle` が終了コード0。最終distの4TTF・2OFLは原本とバイト一致、HTML/JS/CSSに外部フォントURL候補なし、lock変更なし。既存のYarn global-folder／Browserslist通知、Rust releaseの `rust-objcopy` / `libLLVM.dylib` 不足によるstrip警告があるがビルド成功。共有toolchainは変更していない。任意のヘッドレス計測はローカルHTTP待受が環境の `EPERM` で拒否され、書体ready/初期表示/メモリのMac実測値は未取得。固定Rust 1.95.0、Windows WebView2・クリップボード・PowerShell・GUI・MSIXは未検証。
+
+## PR-06 UI・権限・CSP
+
+2026-10-30 JST。UI値は [設計規則](design/estamp-design-rules.md) を正とし、250×120の起動サイズ・250×310の最大サイズ・100pxの印影を維持する。最小寸法は250×120。設定の縦スクロールと自然なTab順、IME確定待ち、長文日付エラーの全文折返し、日本語label、Aboutのpackage版番号・PR-03のライセンス表示を実装した。[設定導線の3案](design/pr06-settings-entry-proposal.md) は提案のみで未実装。
+
+本番CSPは `tauri.conf.json` に固定し、同梱資源と `ipc: http://ipc.localhost` だけを許可する。Svelte本番CSSは抽出され、Skeleton CSS・インラインstyle・動的トーストを使用しないため `style-src 'self'` で `unsafe-inline` 不要。Canvgは同一documentのCanvasへ描画し `img-src 'self'` のみで `data:`／`blob:` 不要。devCspのHTTP／WS・インラインスタイルはVite開発用で、本番の受入確認は必ず通常releaseで行う。WebViewのページ遷移もローカルoriginに制限する。
+
+`AppManifest::commands` の自動permission定義とmain-window capabilityを照合する。通常grantはlocal mainの設定4操作・画像作成／書込み／解放の7件。Rust各コマンドは注入windowのlabelも検査し、saveは型・サイズ・正規の実在日付とモード整合性を再検証する。旧設定の読込／取込は訂正可能な値を保持し、保存時のrevision原文照合・未知値保持を維持する。PR-05のnative計測clock／command／handlerと追加grantはbuild.rsの `ESTAMP_PR05_MEASURE=1` 時だけコンパイルされる。計測専用ビルドは従来どおりfrontend側の `VITE_PR05_MEASURE=1` も必要で、通常配布ビルドでは両方外す。
+
+`yarn run check` にUI/CSP/capability/commandの構造検査、ネイティブbuttonのclick bindingと実Appコピー処理、IMEの保留／確定、長文エラー全文の保持・出力停止・訂正復旧、About／版の一致を追加した。NodeのCSS・構造検査は実ブラウザーの改行やOSキーボード操作を代替しない。[Windows手順](verification/pr06-windows-check.md) で100／150／200%の実幅・IME・読み上げ・実キー・本番CSPと書体／画像／clipboardを判定する。
+
+依存宣言の `@skeletonlabs/skeleton`・`svelte-french-toast`・`html-to-image` は未使用になったが、今回のlock不変指定を優先して削除を後続に残した。PR-03の旧テーマMIT原文は画面・resources・第三者一覧へ引き続き含める。正式MSIX・StoreアセットはPR-07。
+
+2026-10-30 JST 最終検証: Mac ARM64 / macOS 27.2（26B123）、Node 24.22.1、Yarn 1.22.22、Rust／Cargo stable 1.99.1（固定1.95.0は未検証）。`COREPACK_ENABLE_NETWORK=0`、Cargo `--locked --offline -j 2`、TMPDIRはリポジトリ内のoutputs配下とし、指定5コマンドを順に直列実行してすべて終了コード0。`yarn run check` は診断0 errors／0 warnings、日付10・保存4・App45・書体4・画像8・UI/CSP10＝JS81件合格、Rust28件合格。新しいnative計測分岐もopt-inのcargo checkが成功し、通常設定へ戻したcheckも成功した。Viteに計測フラグの無効値を明示して本番JSから計測コードを除去し、修正後に指定5コマンドを再度順番に完了した。最終distの4TTF・2OFLは原本とバイト一致、HTMLに外部資源・インラインstyleなし、HTML/JS/CSSに外部フォントURLなし、JSに計測用global／command／console文字列なし。生成ACLのmain/local限定と7grant、lock2本のSHA-256不変、印影生成コード・既存アイコン不変、`git diff --check` を確認。Yarn global-folder／Browserslist通知と、共有Rust環境のrust-objcopy／libLLVM.dylib不足によるstrip警告は既存同様に残るがrelease buildは成功。共有toolchainの変更、ネットワーク取得、git add／commit、GUI起動は行っていない。証跡は `outputs/pr06-*.txt` と `outputs/pr06-artifact-audit.json`（未追跡）。Windows・GUIの合否は上記手順へ引き継ぐ。

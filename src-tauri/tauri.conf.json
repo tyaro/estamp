@@ -12,7 +12,8 @@
   "app": {
     "withGlobalTauri": false,
     "security": {
-      "csp": null,
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'",
+      "devCsp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'",
       "capabilities": [
         "main-window"
       ]
@@ -25,6 +26,8 @@
         "title": "電子印",
         "width": 250,
         "height": 120,
+        "minWidth": 250,
+        "minHeight": 120,
         "maxWidth": 250,
         "maxHeight": 310
       }

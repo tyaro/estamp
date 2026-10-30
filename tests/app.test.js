@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { parse } from 'svelte/compiler';
 import { get, writable } from 'svelte/store';
 import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
@@ -43,7 +44,7 @@ function app({
   let now = new Date(2025, 11, 31, 23, 59, 59);
   const gate = deferred();
   const reached = deferred();
-  const events = { renders: [], writes: [], closed: 0, success: [], error: [], sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
+  const events = { renders: [], writes: [], closed: 0, sent: [], revisions: [], commands: [], listeners: new Map(), cleared: [] };
   const image = { close: async () => { events.closed++; } };
   const boundary = async stage => {
     if (stage === failAt) throw new Error('検証エラー');
@@ -92,9 +93,7 @@ function app({
     } },
     '@tauri-apps/api/image': { Image: { new: async (rgba, width, height) => { assert.ok(rgba instanceof Uint8Array); assert.equal(rgba.length, width * height * 4); await boundary('image'); return image; } } },
     '@tauri-apps/plugin-clipboard-manager': { writeImage: async value => { assert.equal(value, image); await boundary('write'); events.writes.push(value.svg); } },
-    'svelte-french-toast': {
-      success: message => events.success.push(message), error: message => events.error.push(message),
-    },
+    '../package.json': { version: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version },
     './date.js': {
       ...dates, restoreDate: config => dates.restoreDate(config, now), todayState: () => dates.todayState(now), refreshDate: state => dates.refreshDate(state, now),
     },
@@ -156,8 +155,7 @@ for (const pause of ['render', 'image']) {
       ui.gate.resolve();
       await copying;
       assert.deepEqual(ui.events.writes, []);
-      assert.deepEqual(ui.events.success, []);
-      assert.match(ui.events.error[0], /変更.*中止/);
+      assert.match(ui.run('copyMessage'), /変更.*中止/);
       assert.equal(ui.events.closed, 1);
       assert.equal(ui.run('copying'), false);
       if (change === 'invalid date') ui.edit('R7.10.22');
@@ -166,7 +164,7 @@ for (const pause of ['render', 'image']) {
       const state = ui.run('dateState');
       assert.ok(ui.events.writes[0].includes(dates.formatStampDate(state.date, get(ui.settings).date_format)));
       assert.equal(ui.events.closed, 2);
-      assert.equal(ui.events.success.length, 1);
+      assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
     });
   }
 }
@@ -182,8 +180,7 @@ test('App copies an unchanged stamp once and releases its image', async () => {
   assert.ok(ui.events.writes[0].includes('2025.12.31'));
   assert.equal(ui.events.writes[0], ui.run('stampSvg'), 'copy uses the computed preview SVG');
   assert.equal(ui.events.closed, 1);
-  assert.deepEqual(ui.events.error, []);
-  assert.equal(ui.events.success.length, 1);
+  assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
   assert.equal(ui.run('copying'), false);
 });
 
@@ -205,14 +202,13 @@ test('App preserves edits after the save handler completes and saves them next t
   assert.equal(ui.run('revision'), 'saved revision');
   assert.deepEqual(get(ui.settings), edited);
   assert.equal(ui.run('dateState'), editedDate);
-  assert.deepEqual(ui.events.success, []);
   assert.equal(ui.run('dirty'), true);
   assert.match(ui.run('storageMessage'), /未保存の変更があります/);
   await ui.save();
   assert.deepEqual(ui.events.sent[1], { ...edited, date_mode: 'manual', manual_date: '2024-02-29' });
   assert.deepEqual(ui.events.revisions, [null, 'saved revision']);
   assert.equal(ui.run('dirty'), false);
-  assert.deepEqual(ui.events.success, ['保存しました']);
+  assert.equal(ui.run('storageMessage'), '○ 保存しました');
 });
 
 test('App clears the save-during-edit warning when edits revert to the saved values', async () => {
@@ -228,7 +224,6 @@ test('App clears the save-during-edit warning when edits revert to the saved val
   await ui.flush();
   assert.equal(ui.run('dirty'), true);
   assert.equal(ui.run('storageMessage'), '△ 未保存の変更があります');
-  assert.deepEqual(ui.events.success, []);
 
   ui.settings.set(saved);
   await ui.flush();
@@ -280,7 +275,6 @@ test('App save guards invalid input and preserves edits on failure', async () =>
   assert.match(ui.run('storageMessage'), /保存に失敗/);
   assert.equal(ui.run('revision'), null);
   assert.equal(ui.run('busy'), false);
-  assert.deepEqual(ui.events.success, []);
 });
 
 test('App reports unsaved invalid date input typed during a successful save', async () => {
@@ -293,7 +287,6 @@ test('App reports unsaved invalid date input typed during a successful save', as
   assert.equal(ui.run('revision'), 'saved revision');
   assert.equal(ui.run('dirty'), true);
   assert.match(ui.run('storageMessage'), /未保存/);
-  assert.deepEqual(ui.events.success, []);
 });
 
 test('App waits for fonts before rendering the first copied image', async () => {
@@ -477,7 +470,6 @@ for (const failAt of ['fonts', 'render', 'image', 'write']) {
     assert.equal(ui.run('copying'), false);
     assert.equal(ui.events.closed, failAt === 'write' ? 1 : 0);
     assert.equal(ui.events.writes.length, 0);
-    assert.equal(ui.events.error.length, 1);
   });
 }
 
@@ -501,3 +493,67 @@ for (const change of ['top_str', 'btm_str', 'top_font_size', 'mid_font_size', 'b
     assert.equal(ui.events.closed, 1);
   });
 }
+
+// Native buttons translate Enter/Space into click. Test the production click
+// binding and the complete copy handler; the OS key dispatch is checked on Windows.
+test('native Enter/Space activation is bound to the copy handler without duplicate key handlers', async () => {
+  const ast = parse(source.replace(/<script lang="ts">[\s\S]*?<\/script>/, '<script></script>'));
+  const elements = [];
+  const walk = node => {
+    if (node?.type === 'Element') elements.push(node);
+    for (const child of node?.children ?? []) walk(child);
+  };
+  walk(ast.html);
+  const button = elements.find(node => node.name === 'button' && node.attributes.some(a => a.name === 'aria-label' && a.value?.[0]?.data === '印影をコピー'));
+  assert.ok(button);
+  assert.equal(button.attributes.find(a => a.name === 'type').value[0].data, 'button');
+  assert.ok(!button.attributes.some(a => ['role', 'tabindex', 'keydown', 'keyup'].includes(a.name)));
+  const click = button.attributes.find(a => a.type === 'EventHandler' && a.name === 'click');
+  assert.equal(click.expression.type, 'Identifier');
+  for (const key of ['Enter', ' ']) {
+    const ui = app({ pause: '' });
+    await ui.run(`${click.expression.name}()`);
+    assert.equal(ui.events.writes.length, 1, key);
+    assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
+    assert.equal(ui.events.closed, 1);
+  }
+});
+
+test('IME composition defers date validation and blocks save/copy until the committed value', async () => {
+  const ui = app({ pause: '' });
+  const before = ui.run('dateState');
+  ui.run('composing = true');
+  ui.edit('令和');
+  assert.equal(ui.run('dateState'), before);
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 0);
+  assert.equal(ui.events.sent.length, 0);
+  ui.run("finishComposition({target: {id: 'date-input', value: '令和7年10月22日'}})");
+  assert.equal(ui.run('dateState.date'), '2025-10-22');
+  assert.equal(ui.run('dateState.error'), '');
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 1);
+  assert.equal(ui.events.sent[0].manual_date, '2025-10-22');
+  // IME input in either name field must not replace the date input.
+  ui.run("composing = true; finishComposition({target: {id: 'top-text', value: '部署名'}})");
+  assert.equal(ui.run('dateState.date'), '2025-10-22');
+});
+
+for (const [input, message] of [
+  ['H31.5.1', '平成31年5月1日は平成の期間外です。正しい表記は令和元年5月1日です。'],
+  ['1872-01-01', '旧暦は未対応です（1873年1月1日以降を入力してください）。'],
+]) test(`P3 keeps the complete long date error for ${input} and disables output until corrected`, async () => {
+  const ui = app({ pause: '' });
+  const original = ui.run('dateState.date');
+  ui.edit(input);
+  assert.equal(ui.run('dateState.input'), input);
+  assert.equal(ui.run('dateState.error'), message);
+  assert.equal(ui.run('dateState.date'), original);
+  await ui.copy(); await ui.save();
+  assert.equal(ui.events.writes.length, 0);
+  assert.equal(ui.events.sent.length, 0);
+  ui.edit('R元.5.1');
+  assert.equal(ui.run('dateState.error'), '');
+  await ui.copy();
+  assert.equal(ui.events.writes.length, 1);
+});

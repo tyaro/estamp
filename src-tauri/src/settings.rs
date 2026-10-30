@@ -97,6 +97,44 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    // Validate outgoing IPC independently of the frontend. Loading/importing keeps
+    // legacy values available for correction in the UI; it never executes them.
+    fn validate_for_save(&self) -> Result<(), String> {
+        if self.schema_version != SCHEMA_VERSION {
+            return Err("対応していない schema の設定は保存できません。".into());
+        }
+        if [self.top_font_size, self.mid_font_size, self.btm_font_size]
+            .iter().any(|size| !(1..=400).contains(size))
+        {
+            return Err("文字サイズは1〜400の整数で入力してください".into());
+        }
+        if !(1..=4096).contains(&self.output_size) {
+            return Err("出力サイズは1〜4096pxの整数で入力してください".into());
+        }
+        match (&self.date_mode, self.manual_date.as_deref()) {
+            (DateMode::Auto, None) => Ok(()),
+            (DateMode::Manual, Some(date)) if valid_manual_date(date) => Ok(()),
+            _ => Err("日付の設定が不正です。日付を入力するか「今日に戻す」を選んでください。".into()),
+        }
+    }
+}
+
+fn valid_manual_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-'
+        || !bytes.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+    {
+        return false;
+    }
+    let year: u32 = date[..4].parse().unwrap();
+    let month: usize = date[5..7].parse().unwrap();
+    let day: u32 = date[8..].parse().unwrap();
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    date >= "1873-01-01" && (1..=12).contains(&month) && (1..=days[month - 1]).contains(&day)
+}
+
 #[derive(Debug, Serialize)]
 pub struct LoadedSettings {
     pub settings: Settings,
@@ -207,6 +245,7 @@ impl SettingsStore {
     }
 
     pub fn save(&self, config: &Settings, revision: Option<&str>) -> Result<String, String> {
+        config.validate_for_save()?;
         let _lock = self.lock()?;
         self.check_revision(revision)?;
         // The lock and revision comparison above guarantee this is the current file.
@@ -347,6 +386,43 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ipc_save_rejects_invalid_sizes_before_touching_the_destination() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        let original = store.save(&Settings::default(), None).unwrap();
+        for field in ["top_font_size", "mid_font_size", "btm_font_size", "output_size"] {
+            for value in [0, 4097] {
+                let mut json = serde_json::to_value(Settings::default()).unwrap();
+                json[field] = value.into();
+                let invalid = serde_json::from_value(json).unwrap();
+                assert!(store.save(&invalid, Some(&original)).is_err());
+                assert_eq!(fs::read_to_string(store.path()).unwrap(), original);
+            }
+        }
+        for json in [r#"{"output_size":1.5}"#, r#"{"top_font_size":-1}"#, r#"{"date_mode":"unknown"}"#, r#"{"date_format":"unknown"}"#] {
+            assert!(serde_json::from_str::<Settings>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn ipc_save_requires_a_real_canonical_supported_manual_date() {
+        for date in ["1873-01-01", "2019-05-01", "2024-02-29", "2000-02-29", "9999-12-31"] {
+            assert!(valid_manual_date(date), "{date}");
+        }
+        for date in ["", "H31.5.1", "2024-2-29", "2025-02-29", "1900-02-29", "1872-01-01", "2025-00-01", "2025-13-01", "2025-01-00", "2025-04-31", "２０２５-01-01", "2025-01-01T00:00:00Z"] {
+            assert!(!valid_manual_date(date), "{date}");
+            let invalid = Settings { date_mode: DateMode::Manual, manual_date: Some(date.into()), ..Settings::default() };
+            assert!(invalid.validate_for_save().is_err());
+        }
+        let mut config = Settings { date_mode: DateMode::Manual, ..Settings::default() };
+        assert!(config.validate_for_save().is_err());
+        config.manual_date = Some("2024-02-29".into());
+        assert!(config.validate_for_save().is_ok());
+        config.date_mode = DateMode::Auto;
+        assert!(config.validate_for_save().is_err());
+    }
 
     const LEGACY_JSON: &[u8] = r#"{
         "top_str":"所属", "top_font_size":90, "mid_font_size":60,

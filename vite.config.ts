@@ -13,6 +13,11 @@ export default defineConfig(async () => ({
       ],
     }),
   ],
+  // Define an explicit disabled value so production tree-shaking removes the
+  // measurement body even when the environment variable is absent.
+  define: {
+    'import.meta.env.VITE_PR05_MEASURE': JSON.stringify(process.env.VITE_PR05_MEASURE === '1' ? '1' : '0'),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors

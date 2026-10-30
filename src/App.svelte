@@ -4,14 +4,15 @@
   import { invoke } from '@tauri-apps/api/core';
   import { Image } from '@tauri-apps/api/image';
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
-  import toast, { Toaster } from 'svelte-french-toast';
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
   import { saveSettings, settingsSnapshot } from './save.js';
   import { loadStampFonts, loadUiFonts } from './fonts.js';
   import { buildStampSvg, renderStampImage, validateImageSettings } from './stampImage.js';
   import { markPerformance } from './performance.js';
   import Licenses from './Licenses.svelte';
+  import { version } from '../package.json';
 
+  let composing = false;
   let dateState = todayState();
   let fontsReady = false;
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
@@ -22,7 +23,14 @@
   })();
   const refreshToday = () => { dateState = refreshDate(dateState); };
   const inputDate = (event: Event) => {
+    if (composing || (event as InputEvent).isComposing) return;
     dateState = editDate(dateState, (event.currentTarget as HTMLInputElement).value);
+  };
+
+  const finishComposition = (event: CompositionEvent) => {
+    composing = false;
+    const input = event.target as HTMLInputElement;
+    if (input.id === 'date-input') dateState = editDate(dateState, input.value);
   };
 
   let copying = false;
@@ -67,7 +75,7 @@
   };
 
   const save = async () => {
-    if (busy || !ready || dateState.error || imageError) return;
+    if (composing || busy || !ready || dateState.error || imageError) return;
     refreshToday();
     busy = true;
     try {
@@ -77,7 +85,6 @@
       savedSnapshot = snapshot;
       dirty = !!dateState.error || JSON.stringify(settingsSnapshot($settings, dateState)) !== snapshot;
       storageMessage = dirty ? '△ 未保存の変更があります' : '○ 保存しました';
-      if (!dirty) toast.success("保存しました", { position: "top-center" });
     } catch (error) {
       storageMessage = `× 保存に失敗しました：${String(error)}`;
     } finally {
@@ -118,7 +125,6 @@
     busy = true;
     try {
       applyLoaded(await invoke<LoadedSettings>("import_legacy", { revision }));
-      toast.success("旧設定を取り込みました", { position: "top-center" });
     } catch (error) {
       storageMessage = `× 旧設定を取り込めませんでした：${String(error)}`;
     } finally {
@@ -146,7 +152,7 @@
     };
   });
   const clipboardCopy = async () => {
-    if (busy || !ready || !fontsReady || copying || dateState.error || imageError) return;
+    if (composing || busy || !ready || !fontsReady || copying || dateState.error || imageError) return;
     copying = true;
     copyMessage = '';
     try {
@@ -159,11 +165,10 @@
       try {
         refreshToday();
         await tick();
-        if (disposed || busy || !ready || dateState.error || imageError
+        if (disposed || composing || busy || !ready || dateState.error || imageError
           || stampSvg !== expectedSvg
           || $settings.output_size !== outputSize) {
           copyMessage = '△ 印影が変更されたためコピーを中止しました。もう一度コピーしてください。';
-          toast.error(copyMessage, { position: 'bottom-center' });
           return;
         }
         await writeImage(image);
@@ -171,210 +176,148 @@
       } finally {
         await image.close();
       }
-      toast.success('画像をコピーしました', { position: 'bottom-center' });
     } catch (error) {
       copyMessage = `× 画像コピーに失敗しました：${String(error)}`;
-      toast.error(copyMessage, { position: 'bottom-center' });
     } finally {
       copying = false;
     }
   };
 </script>
-<Toaster />
 <div class="app-viewport">
-<div class="main">
-  <button aria-label="印影をコピー" disabled={busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError} on:click={()=>clipboardCopy()}>
-  {#if fontsReady}
-  {@html stampSvg}
-  {:else}
-    書体を読込中…
+  <div class="main">
+    <button class="stamp-copy" type="button" aria-label="印影をコピー"
+      disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
+      aria-busy={copying} on:click={clipboardCopy}>
+      {#if fontsReady}
+        {@html stampSvg}
+      {:else}
+        書体を読込中…
+      {/if}
+    </button>
+  </div>
+  {#if storageMessage}
+    <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
+      class:storage-success={storageMessage.startsWith('○')} role="status">{storageMessage}</p>
   {/if}
-</button>
-</div>
-{#if storageMessage}
-  <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')} class:storage-success={storageMessage.startsWith('○')} role="alert">{storageMessage}</p>
-{/if}
-{#if copyMessage}
-  <p class="storage-message" class:storage-success={copyMessage.startsWith('○')} role="status">{copyMessage}</p>
-{/if}
-{#if imageError}
-  <p class="storage-message" role="alert">{imageError}</p>
-{/if}
-{#if fontMessage}
-  <p class="storage-message" role="alert">{fontMessage}</p>
-  <button on:click={prepareFonts}>書体を再読込</button>
-{/if}
-<fieldset class="menu" disabled={busy || !ready}>
-  <table>
-    <tr>
-      <th>位置</th>
-      <th>文字列</th>
-      <th style="width:20px">サイズ</th>
-    </tr>
-    <tr>
-      <td style="width:4rem;text-align:center">
-        上段
-      </td>
-      <td >
-        <input class="variant-glass-primary" style="width:6rem"  aria-label="上段の文字列" bind:value={$settings.top_str}>
-      </td>
-      <td>
-        <input class="variant-glass-primary" type="number" style="width:4rem" aria-label="上段の文字サイズ" min="1" max="400" step="1" bind:value={$settings.top_font_size}>
-      </td>
-    </tr>
-    <tr>
-      <td style="width:4rem;text-align:center">
-        日付
-      </td>
-      <td >
-        <input id="date-input" aria-label="日付（西暦・和暦）" aria-invalid={!!dateState.error}
-          aria-describedby="date-error date-confirmation" class="variant-glass-primary" style="width:6rem"
-          value={dateState.input} on:input={inputDate} placeholder="R7.10.22">
-      </td>
-      <td>
-        <input aria-label="日付の文字サイズ" class="variant-glass-primary" type="number" style="width:4rem" min="1" max="400" step="1" bind:value={$settings.mid_font_size}>
-        <select aria-label="日付の表示形式" bind:value={$settings.date_format}>
-          <option value="gregorian">西暦</option>
-          <option value="wareki">和暦</option>
-        </select>
-      </td>
-    </tr>
-    <tr>
-      <td colspan="3" class="date-detail">
-        <p id="date-error" role="alert" class="date-error">{dateState.error ? `× ${dateState.error}` : ''}</p>
-        <p id="date-confirmation">{describeDate(dateState.date)}</p>
-        <span>{dateState.mode === 'auto' ? '自動' : '手動'}</span>
-        <button type="button" on:click={() => { dateState = todayState(); }}>今日に戻す</button>
-      </td>
-    </tr>
-    <tr>
-      <td style="width:4rem;text-align:center">
-        下段
-      </td>
-      <td >
-        <input class="variant-glass-primary" style="width:6rem"  aria-label="下段の文字列" bind:value={$settings.btm_str}>
-      </td>
-      <td>
-        <input class="variant-glass-primary" type="number" style="width:4rem" aria-label="下段の文字サイズ" min="1" max="400" step="1" bind:value={$settings.btm_font_size}>
-      </td>
-    </tr>
-    <tr>
-      <td style="width:4rem;text-align:center">
-        サイズ
-      </td>
-      <td >
-        <input type="number" class="variant-glass-primary" style="width:6rem"  aria-label="出力サイズ（px）" min="1" max="4096" step="1" bind:value={$settings.output_size}>
-      </td>
-      <td>
-        px
-      </td>
-    </tr>
-  </table>
-</fieldset>
-<div style="display:flex;justify-content:center;margin-top:5px">
-    <button class="save" disabled={busy || !ready || !!dateState.error || !!imageError} on:click={save}>保存</button>
-</div>
-{#if dirty && (!storageMessage || storageMessage.startsWith('○'))}
-  <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
-{/if}
-<div class="storage-actions">
-  <button disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
-  {#if ready && legacyAvailable}
-    <button disabled={busy} on:click={() => confirmingImport = true}>旧設定を取り込む</button>
-    <p>実行ファイルと同じフォルダーの Setting.json が見つかりました。保存後も取り込めます。</p>
-    {#if confirmingImport}
-      <p role="alert">保存済みの設定と編集中の値を旧設定で置き換えます。取り込みますか？ 元の旧ファイルは残ります。</p>
-      <button disabled={busy} on:click={importLegacy}>置き換えて取り込む</button>
-      <button disabled={busy} on:click={() => confirmingImport = false}>キャンセル</button>
-    {/if}
+  {#if copyMessage}
+    <p class="storage-message" class:storage-warning={copyMessage.startsWith('△')}
+      class:storage-success={copyMessage.startsWith('○')} role="status">{copyMessage}</p>
   {/if}
-</div>
+  {#if fontMessage}
+    <p class="storage-message" role="alert">{fontMessage}</p>
+    <div class="retry"><button type="button" on:click={prepareFonts}>書体を再読込</button></div>
+  {/if}
+  <section class="settings-panel" aria-labelledby="settings-heading">
+    <h1 id="settings-heading">印影の設定</h1>
+    <fieldset class="menu" disabled={busy || !ready}
+      on:compositionstart={() => composing = true} on:compositionend={finishComposition}>
+      <legend>文字と日付</legend>
+      <label for="top-text">上段の文字列</label>
+      <input id="top-text" bind:value={$settings.top_str}>
+      <label for="top-size">上段の文字サイズ</label>
+      <input id="top-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.top_font_size}>
 
-<Licenses />
+      <label for="date-input">日付（西暦・和暦）</label>
+      <input id="date-input" type="text" aria-invalid={!!dateState.error}
+        aria-describedby="date-help date-error date-confirmation" value={dateState.input}
+        on:input={inputDate} placeholder="R7.10.22" autocomplete="off" spellcheck={false}>
+      <p id="date-error" role="alert" class="date-error">{dateState.error ? `× ${dateState.error}` : ''}</p>
+      <p id="date-help" class="hint">例：R7.10.22、令和7年10月22日、2025/10/22</p>
+      <p id="date-confirmation">{describeDate(dateState.date)}</p>
+      <p class="hint">{dateState.mode === 'auto' ? '自動：今日の日付に更新します' : '手動：指定した日付を使います'}</p>
+      <button type="button" on:click={() => { dateState = todayState(); }}>今日に戻す</button>
+      <label for="date-size">日付の文字サイズ</label>
+      <input id="date-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.mid_font_size}>
+      <label for="date-format">日付の表示形式</label>
+      <select id="date-format" bind:value={$settings.date_format}>
+        <option value="gregorian">西暦</option>
+        <option value="wareki">和暦</option>
+      </select>
+
+      <label for="bottom-text">下段の文字列</label>
+      <input id="bottom-text" bind:value={$settings.btm_str}>
+      <label for="bottom-size">下段の文字サイズ</label>
+      <input id="bottom-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.btm_font_size}>
+      <p id="size-help" class="hint">文字サイズ：1〜400の整数。印影に収まるよう自動調整します。</p>
+      <label for="output-size">出力サイズ（px）</label>
+      <input id="output-size" type="number" min="1" max="4096" step="1" aria-describedby="output-help image-error" bind:value={$settings.output_size}>
+      <p id="output-help" class="hint">1〜4096pxの整数。画面の印影は100pxです。</p>
+    </fieldset>
+    <p id="image-error" class="date-error" role="alert">{imageError}</p>
+    <button class="save" type="button" disabled={composing || busy || !ready || !!dateState.error || !!imageError} on:click={save}>保存</button>
+    {#if dirty && (!storageMessage || storageMessage.startsWith('○'))}
+      <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
+    {/if}
+    <div class="storage-actions">
+      <button type="button" disabled={busy} on:click={load}>再読込（編集中の値を置換）</button>
+      {#if ready && legacyAvailable}
+        <button type="button" disabled={busy} on:click={() => confirmingImport = true}>旧設定を取り込む</button>
+        <p>実行ファイルと同じフォルダーの Setting.json が見つかりました。保存後も取り込めます。</p>
+        {#if confirmingImport}
+          <p role="alert">保存済みの設定と編集中の値を旧設定で置き換えます。取り込みますか？ 元の旧ファイルは残ります。</p>
+          <button type="button" disabled={busy} on:click={importLegacy}>置き換えて取り込む</button>
+          <button type="button" disabled={busy} on:click={() => confirmingImport = false}>キャンセル</button>
+        {/if}
+      {/if}
+    </div>
+  </section>
+  <section class="about" aria-labelledby="about-heading">
+    <h2 id="about-heading">estampについて</h2>
+    <p>バージョン {version}</p>
+    <p>画像の日付印を作るアプリ</p>
+    <p>発行元：Banto Works</p>
+    <Licenses />
+  </section>
 </div>
 
 <style>
-  input{
-    border-radius: 8px;
+  /* Preserve the seal-only startup area, including its existing 5px top gap. */
+  .main {
     text-align: center;
-    background-color:primary;
-    border: 2px;
-    
-  }
-  .save{
-    background-color: rgb(147, 147, 250);
-    width: 150px;
-    height: 25px;
-    border-radius: 8px;
-    margin-top: 5px;
-  }
-  button{
-    width: fit-content;
-  }
-  button:hover{
-    opacity: 0.8;
-  }
-  button:active{
-    opacity: 0.6;
-  }
-  .main{
-    text-align: center;
-    justify-items: center;
+    display: flex;
     justify-content: center;
     align-items: flex-start;
-    display: flex;
-    margin-top:5px;
+    margin-top: 5px;
     width: 240px;
+    max-width: 100%;
     height: 125px;
   }
+  .stamp-copy {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    border-radius: 8px;
+    min-width: 100px;
+    min-height: 100px;
+  }
+  .stamp-copy :global(svg) { display: block; }
   .app-viewport {
     height: 100vh;
     overflow-y: auto;
     overflow-x: hidden;
   }
-  .date-detail {
-    max-width: 240px;
-    font-size: 14px;
-  }
+  .settings-panel, .about { padding: 16px; min-width: 0; }
+  h1, h2 { color: var(--primary); font-size: 16px; margin: 0 0 16px; }
+  .menu { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; }
+  legend { font-weight: 700; margin-bottom: 8px; padding: 0; }
+  label { margin-top: 8px; }
+  input, select { width: 100%; min-width: 0; }
+  p { margin: 0; }
+  .hint { color: var(--muted); }
   .date-error {
-    color: #B42318;
-    width: 240px;
-    white-space: nowrap;
-    overflow-x: auto;
-  }
-  .date-detail button {
-    margin-left: 8px;
-  }
-  .menu{
-    border: 0;
-    padding: 0;
-    min-width: 15rem;
-    margin-top:5px;
-  }
-  .storage-message {
-    color: #B42318;
-    background: #F7F6F2;
-    padding: 8px;
-    margin: 0;
-    font-size: 14px;
+    color: var(--error);
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
     overflow-wrap: anywhere;
   }
-  .storage-actions {
-    display: grid;
-    gap: 4px;
-    margin: 8px;
-    font-size: 14px;
-  }
-  .storage-success {
-    color: #18794E;
-  }
-  .storage-warning {
-    color: #8A5700;
-  }
-  .storage-actions button {
-    min-height: 32px;
-    border-radius: 8px;
-  }
-
+  .date-error:empty { display: none; }
+  .save { background: var(--primary); color: #fff; width: 100%; margin-top: 16px; }
+  .storage-message { color: var(--error); padding: 8px; margin: 0; }
+  .storage-success { color: var(--success); }
+  .storage-warning { color: var(--warning); }
+  .storage-actions { display: grid; gap: 8px; margin-top: 16px; min-width: 0; }
+  .retry { padding: 8px; }
+  .about { border-top: 1px solid var(--border); }
+  .about > p { margin-bottom: 8px; }
 </style>
-
