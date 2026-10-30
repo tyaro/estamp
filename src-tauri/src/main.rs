@@ -2,9 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod settings;
+mod settings_window;
 
 use settings::{LoadedSettings, Settings, SettingsStore};
+use settings_window::{set_settings_expanded, show_settings_menu, SettingsWindow};
+use std::sync::Mutex;
 use tauri::Manager;
+
+#[derive(Default)]
+struct Startup(Mutex<bool>);
 
 fn require_main(label: &str) -> Result<(), String> {
     if label == "main" {
@@ -32,9 +38,16 @@ fn settings_store(app: &tauri::AppHandle) -> Result<SettingsStore, String> {
 }
 
 #[tauri::command]
-fn load(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<LoadedSettings, String> {
+fn load(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    startup: tauri::State<'_, Startup>,
+) -> Result<LoadedSettings, String> {
     require_main(window.label())?;
-    settings_store(&app)?.load()
+    let mut counted = startup.0.lock().map_err(|e| e.to_string())?;
+    let result = settings_store(&app)?.load_session(!*counted)?;
+    *counted = true;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -97,12 +110,15 @@ fn pr05_measure(window: tauri::WebviewWindow, clock: tauri::State<'_, Pr05Clock>
 
 fn main() {
     let builder = tauri::Builder::default()
+        .manage(SettingsWindow::default())
+        .manage(Startup::default())
+        .on_menu_event(settings_window::menu_event)
         .plugin(tauri::plugin::Builder::<tauri::Wry>::new("local-navigation")
             .on_navigation(|_, url| local_navigation(url, cfg!(dev)))
             .build())
         .plugin(tauri_plugin_clipboard_manager::init());
     #[cfg(not(pr05_measure))]
-    let builder = builder.invoke_handler(tauri::generate_handler![save, load, import_legacy, legacy_available]);
+    let builder = builder.invoke_handler(tauri::generate_handler![save, load, import_legacy, legacy_available, show_settings_menu, set_settings_expanded]);
     #[cfg(pr05_measure)]
     let builder = builder
         .manage(Pr05Clock(std::time::Instant::now()))
@@ -119,7 +135,9 @@ fn main() {
             load,
             import_legacy,
             legacy_available,
-            pr05_measure
+            pr05_measure,
+            show_settings_menu,
+            set_settings_expanded
         ]);
     builder
         .run(tauri::generate_context!())
@@ -136,6 +154,19 @@ mod access_tests {
         for label in ["", "settings", "main-child", "MAIN", "*"] {
             assert!(require_main(label).is_err());
         }
+    }
+
+    #[test]
+    fn settings_commands_and_event_permissions_are_local_main_only() {
+        let capability: serde_json::Value = serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
+        assert_eq!(capability["local"], true);
+        assert_eq!(capability["windows"], serde_json::json!(["main"]));
+        assert!(capability.get("remote").is_none());
+        let permissions = capability["permissions"].as_array().unwrap();
+        for permission in ["allow-show-settings-menu", "allow-set-settings-expanded", "core:event:allow-listen", "core:event:allow-unlisten"] {
+            assert!(permissions.contains(&serde_json::json!(permission)));
+        }
+        assert!(!permissions.iter().any(|p| p.as_str().unwrap().starts_with("core:window:") || p.as_str().unwrap().starts_with("core:menu:")));
     }
 
     #[test]

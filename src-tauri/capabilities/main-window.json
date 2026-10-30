@@ -3,12 +3,18 @@
   "identifier": "main-window",
   "description": "ローカルのメインウィンドウだけに設定操作と印影画像の作成・コピー・解放を許可します。",
   "local": true,
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-load",
     "allow-save",
     "allow-legacy-available",
     "allow-import-legacy",
+    "allow-show-settings-menu",
+    "allow-set-settings-expanded",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:image:allow-new",
     "clipboard-manager:allow-write-image",
     "core:resources:allow-close"

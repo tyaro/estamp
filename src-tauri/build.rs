@@ -7,6 +7,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "load", "save", "legacy_available", "import_legacy", "pr05_measure",
+            "show_settings_menu", "set_settings_expanded",
         ]),
     ))
     .expect("Tauri のビルド設定を生成できません");

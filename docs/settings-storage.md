@@ -8,10 +8,10 @@ PR #6 / `feat/pr-02-settings-storage` の統合仕様（2026-10-30）。PR-00 / 
 
 | コマンド | 引数 | 応答 |
 | --- | --- | --- |
-| `load` | なし | `{ settings, revision, warning }` |
+| `load` | なし | `{ settings, revision, warning, hint_launch_count }` |
 | `save` | `{ config, revision }` | 新しい revision（文字列） |
 | `legacy_available` | なし | 実行ファイル隣の `Setting.json` が通常ファイルなら `true`、未存在・ディレクトリなら `false`。調査失敗はエラー |
-| `import_legacy` | `{ revision }` | `{ settings, revision, warning }` |
+| `import_legacy` | `{ revision }` | `{ settings, revision, warning, hint_launch_count }` |
 
 revision は JSON の原文を表す不透明なトークン。未保存時は `null`。BOM を含む場合も原文のまま比較し、解析時だけ UTF-8 BOM を除去する。フロントから保存先・取り込み元の任意パスを受け取らない。
 
@@ -71,3 +71,14 @@ Windows CI・実機での rename / OS ロック、GUI での取込確認・キ�
 `save` は書込み前にschema、文字サイズ1〜400、出力1〜4096、手動日付の正規 `YYYY-MM-DD`／実在日／1873-01-01以降、自動時のmanual_date=nullをRustでも検証する。serdeが整数型・文字列型・既存enum値を検証し、revisionは引き続き保存先の原文と比較する。上段・下段の文字列や未知の印影種類は従来どおり保持する。load／legacy_availableはユーザー引数なし、import_legacyはrevisionだけを受け取り固定パスから読み込む。
 
 古い設定の読込・取込は型が正しい既存値を従来どおり返し、不正日付・サイズはUIで訂正する。読込時に新しい保存条件を適用して既存設定を退避・破棄する変更は行わない。PR-06の回帰テストでは不正なIPC保存が既存ファイルを書き換えないことも確認する。
+
+
+## PR-06b：設定ヒントの起動回数
+
+既存のschema 1に任意の`settings_hint_launches`（整数0〜4）を追加する。別ファイル・依存・schema更新を避け、既存の原子的置換と排他ロックを利用する。値がない旧形式は0として読み込める。負数・小数・文字列・null・4超は形式エラーとして既存の退避経路へ進む。
+
+設定ファイルが無い起動では回数を書かず、revision=nullの初回判定を維持する。初回保存で0を書き、保存直後にもヒントを表示する。その後の1〜3回目の起動で加算して表示し、4回目以降は4に固定して消す。旧形式の保存済みファイルでは今回の起動が1となる。Rustのプロセス内状態が、成功した最初のloadだけを起動として数える。設定の再読込・通常保存・取込では回数を変更しない。取込は保存先の回数を引き継ぎ、新規取込は0。回数は`settings`／保存`config`に含めず、Rustで検証して管理し、UIへは`hint_launch_count`だけ返す。
+
+回数の更新もロック下で保存し、更新後のファイル原文をrevisionとして返す。更新の書込みに失敗した場合は読込エラーとなり、既存の再読込導線で再試行する。複数プロセスの起動でも更新は直列化し、古いrevisionによる保存は従来どおり拒否する。未知フィールドのRawValue保持は維持する。
+
+設定展開とメニュー表示はmain限定の`set_settings_expanded({expanded})`／`show_settings_menu({keyboard})`でRustへ依頼する。サイズ・座標・メニュー項目・終了先をJSが任意指定するAPIは公開しない。選択通知はmain宛の`settings-menu-action`イベント、終了はRustの`AppHandle::exit(0)`で行う。

@@ -9,6 +9,7 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'
 const config = JSON.parse(read('src-tauri/tauri.conf.json'));
 const app = read('src/App.svelte');
 const native = read('src-tauri/src/main.rs');
+const windowNative = read('src-tauri/src/settings_window.rs');
 const build = read('src-tauri/build.rs');
 const markup = app.replace(/<script lang="ts">[\s\S]*?<\/script>/, '<script></script>');
 const ast = parse(markup);
@@ -64,14 +65,15 @@ test('only local main has the exact settings and image-write capabilities', () =
   assert.equal(caps.webviews, undefined);
   assert.deepEqual(caps.permissions, [
     'allow-load', 'allow-save', 'allow-legacy-available', 'allow-import-legacy',
+    'allow-show-settings-menu', 'allow-set-settings-expanded', 'core:event:allow-listen', 'core:event:allow-unlisten',
     'core:image:allow-new', 'clipboard-manager:allow-write-image', 'core:resources:allow-close',
   ]);
 });
 
 test('every custom command has an AppManifest entry and an injected main-window guard', () => {
-  const commands = [...native.matchAll(/#\[tauri::command\]\s*fn (\w+)\([\s\S]*?\) -> Result<[^\n]+\{\s*require_main\(window.label\(\)\)\?;/g)].map(match => match[1]);
-  assert.deepEqual(commands.sort(), ['import_legacy', 'legacy_available', 'load', 'pr05_measure', 'save']);
-  assert.equal((native.match(/#\[tauri::command\]/g) ?? []).length, commands.length);
+  const commands = [...(native + windowNative).matchAll(/#\[tauri::command\]\s*(?:pub )?fn (\w+)\([\s\S]*?\) -> Result<[^\n]+\{\s*(?:super::)?require_main\(window.label\(\)\)\?;/g)].map(match => match[1]);
+  assert.deepEqual(commands.sort(), ['import_legacy', 'legacy_available', 'load', 'pr05_measure', 'save', 'set_settings_expanded', 'show_settings_menu']);
+  assert.equal(((native + windowNative).match(/#\[tauri::command\]/g) ?? []).length, commands.length);
   assert.match(build, /AppManifest::new\(\)\.commands\(/);
   for (const command of commands) assert.ok(build.includes(`"${command}"`));
   assert.match(native, /\.on_navigation\(\|_, url\| local_navigation\(url, cfg!\(dev\)\)\)/);
@@ -122,7 +124,7 @@ test('inputs have visible Japanese labels, native tab order and visible focus', 
   ]);
   for (const input of inputs) assert.ok(elements.some(node => node.name === 'label' && literal(node, 'for') === literal(input, 'id')));
   const focusTargets = elements.filter(node => attr(node, 'tabindex'));
-  assert.deepEqual(focusTargets.map(node => [literal(node, 'id'), literal(node, 'tabindex')]), [['copy-error', '-1'], ['settings-heading', '-1']]);
+  assert.deepEqual(focusTargets.map(node => [literal(node, 'id'), literal(node, 'tabindex')]), [['copy-error', '-1'], ['settings-heading', '-1'], ['about-heading', '-1']]);
   assert.match(read('src/app.postcss'), /:focus-visible \{ outline: 2px solid var\(--focus\); outline-offset: 2px;/);
   assert.match(app, /on:compositionstart=\{\(\) => composing = true\} on:compositionend=\{finishComposition\}/);
 });
@@ -132,18 +134,18 @@ test('About reads the product version and reuses local full-text PR-03 licenses'
   assert.equal(version, config.version);
   assert.match(read('src-tauri/Cargo.toml'), new RegExp(`version = "${version.replaceAll('.', '\\.')}"`));
   assert.match(app, /import \{ version \} from '\.\.\/package.json'/);
-  assert.match(app, /<h2 id="about-heading">estampについて<\/h2>\s*<p>バージョン \{version\}<\/p>/);
+  assert.match(app, /<h2 id="about-heading" tabindex="-1" bind:this=\{aboutHeading\}>estampについて<\/h2>\s*<p>バージョン \{version\}<\/p>/);
   assert.match(app, /<Licenses\s*\/>/);
   const licenses = read('src/Licenses.svelte');
   for (const file of ['LICENSE', 'THIRD-PARTY-NOTICES.md', 'bizudpgothic/OFL.txt', 'shipporiminchob1/OFL.txt']) assert.ok(licenses.includes(`${file}?raw`));
   assert.doesNotMatch(app + licenses + read('index.html'), /<(?:iframe|a)\b|https?:\/\//);
 });
 
-test('startup geometry and seal remain unchanged while resize is bounded and maximize is disabled', () => {
+test('startup geometry is fixed and maximize is disabled', () => {
   const [window] = config.app.windows;
   assert.equal(config.app.windows.length, 1);
-  assert.deepEqual([window.width, window.height, window.maxWidth, window.maxHeight, window.resizable], [250, 120, 250, 310, true]);
-  assert.deepEqual([window.minWidth, window.minHeight], [250, 120]);
+  assert.deepEqual([window.width, window.height, window.maxWidth, window.maxHeight, window.resizable], [250, 120, 250, undefined, false]);
+  assert.deepEqual([window.minWidth, window.minHeight], [250, undefined]);
   assert.equal(window.maximizable, false);
   assert.match(read('src/stampImage.js'), /width="100" height="100"/);
   assert.match(app, /height: 100vh;\s*overflow-y: auto;\s*overflow-x: hidden;/);
@@ -166,7 +168,7 @@ test('feedback lives inside the visible stamp box, passes clicks through and has
   assert.ok(badges.every(node => node.attributes.some(a => a.type === 'Class' && a.name === 'feedback-visible')));
   const content = node => markup.slice(node.start, node.end);
   assert.match(content(badges[0]), /copyFeedback\.startsWith\('×'\) \? '' : copyFeedback/);
-  assert.match(content(badges[1]), /\{#if copyFeedback\.startsWith\('×'\)\}\{copyFeedback\}<br>詳細（Ctrl\+,）\{\/if\}/);
+  assert.match(content(badges[1]), /\{#if copyFeedback\.startsWith\('×'\)\}\{copyFeedback\}<br>詳細（Alt\+S）\{\/if\}/);
   assert.match(content(badges[2]), /\{startupIssue\}/);
   assert.match(app, /\.stamp-box \{ position: relative; width: 100px; height: 100px; \}/);
   const feedbackCss = app.match(/\.stamp-feedback\s*\{([^}]+)\}/)[1];
@@ -209,32 +211,23 @@ test('design palette, type and controls use the PR-2 source values without Skele
   assert.doesNotMatch(read('src/main.ts') + read('index.html'), /@skeletonlabs|data-theme|style=/);
 });
 
-test('settings entry is always present with the specified inline icon, dimensions, focus and accessible name', () => {
-  const button = elements.find(node => literal(node, 'class') === 'settings-entry');
-  assert.equal(literal(button, 'aria-label'), '設定');
-  assert.equal(literal(button, 'title'), '設定（Ctrl+,）');
-  assert.equal(literal(button, 'aria-controls'), 'settings-panel');
-  assert.ok(button.attributes.some(a => a.type === 'EventHandler' && a.name === 'click' && a.expression.name === 'openSettings'));
-  assert.ok(ast.html.children.includes(button), 'entry is outside the conditionally hidden settings content');
-  const icon = button.children.find(node => node.name === 'svg');
-  assert.equal(literal(icon, 'width'), '16');
-  assert.equal(literal(icon, 'height'), '16');
-  assert.equal(literal(icon, 'aria-hidden'), 'true');
-  assert.ok(icon.children.some(node => node.name === 'path'));
-  assert.doesNotMatch(markup.slice(button.start, button.end), /<img|<image|style=/);
-  const css = app.match(/\.settings-entry\s*\{([^}]+)\}/)[1];
-  for (const rule of ['position: fixed', 'right: 8px', 'top: 8px', 'width: 32px', 'height: 32px', 'color: #5F6470']) assert.ok(css.includes(rule), rule);
-  assert.match(app, /\.settings-entry:focus-visible \{ outline: 2px solid #2563EB/);
+test('settings entry uses native menu and accessible seal instead of a gear or Ctrl+,', () => {
+  assert.doesNotMatch(app, /settings-entry|Ctrl\+,/);
+  const seal = elements.find(node => literal(node, 'class') === 'stamp-copy');
+  assert.equal(literal(seal, 'aria-label'), '印影をコピー。右クリックまたはAlt+Sで設定');
+  assert.equal(literal(seal, 'title'), literal(seal, 'aria-label'));
   assert.match(app, /<div hidden=\{!settingsOpen\}>/);
-  assert.match(app, /<button type="button" on:click=\{closeSettings\}>閉じる<\/button>/);
-  assert.doesNotMatch(native, /TrayIconBuilder|tray_icon/);
+  assert.match(windowNative, /Menu::new/);
+  assert.match(windowNative, /MenuItem::with_id/);
+  assert.match(windowNative, /\.popup_menu\(&menu\)/);
+  assert.doesNotMatch(native + windowNative, /TrayIconBuilder|tray_icon/);
 });
 
 test('first-save guidance stays below the seal in the 120px startup window', () => {
-  assert.match(app, /\{#if settingsUnsaved && !settingsOpen\}\s*<p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Ctrl\+,）<\/p>/);
+  assert.match(app, /\{#if settingsUnsaved && !settingsOpen\}\s*<p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Alt\+S）<\/p>/);
   assert.match(app, /\{#if settingsUnsaved\}\s*<p class="first-settings" role="status">はじめに氏名などを入力し保存してください<\/p>/);
-  assert.match(app, /\.main.unsaved-startup \{ height: 100px; \}/);
-  assert.match(app, /\.unsaved-settings \{[^}]*line-height: 15px;/);
+  assert.match(app, /\.main.compact-caption \{ height: 100px; \}/);
+  assert.match(app, /\.unsaved-settings, \.settings-hint \{[^}]*line-height: 15px;/);
   assert.ok(5 + 100 + 15 <= config.app.windows[0].height);
 });
 

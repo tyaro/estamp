@@ -143,6 +143,7 @@ pub struct LoadedSettings {
     // Comparing bytes avoids hash collisions and does not require another dependency.
     pub revision: Option<String>,
     pub warning: Option<String>,
+    pub hint_launch_count: u8,
 }
 
 enum DecodeError {
@@ -171,6 +172,12 @@ fn decode(bytes: &[u8]) -> Result<Settings, DecodeError> {
             return Err(DecodeError::Unsupported(format!(
                 "この設定の schema（{version}）には対応していません。ファイルを変更せず、読込・保存を中止しました。"
             )));
+        }
+    }
+    if let Some(count) = value.get("settings_hint_launches") {
+        let count: u8 = serde_json::from_str(count.get()).map_err(|_| DecodeError::Corrupt("settings_hint_launches は0〜4の整数で指定してください".into()))?;
+        if count > 4 {
+            return Err(DecodeError::Corrupt("settings_hint_launches は0〜4の整数で指定してください".into()));
         }
     }
     // Deserialize only known fields. Unknown values never cross the numeric JS boundary.
@@ -212,21 +219,32 @@ impl SettingsStore {
         Ok(lock)
     }
 
+    #[cfg(test)]
     pub fn load(&self) -> Result<LoadedSettings, String> {
+        self.load_session(false)
+    }
+
+    // Only the first successful native load in a process sets count_startup.
+    pub fn load_session(&self, count_startup: bool) -> Result<LoadedSettings, String> {
         let _lock = self.lock()?;
         let Some(bytes) = read_optional(&self.path())? else {
             return Ok(LoadedSettings {
                 settings: Settings::default(),
                 revision: None,
                 warning: None,
+                hint_launch_count: 0,
             });
         };
         match decode(&bytes) {
-            Ok(settings) => Ok(LoadedSettings {
-                settings,
-                revision: Some(String::from_utf8(bytes).map_err(|error| error.to_string())?),
-                warning: None,
-            }),
+            Ok(settings) => {
+                let original = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+                let previous = hint_launch_count(&original)?;
+                let count = if count_startup { (previous + 1).min(4) } else { previous };
+                let revision = if count != previous {
+                    self.write_with_launch_count(&settings, Some(&original), Some(count))?
+                } else { original };
+                Ok(LoadedSettings { settings, revision: Some(revision), warning: None, hint_launch_count: count })
+            },
             Err(DecodeError::Unsupported(message)) => Err(message),
             Err(DecodeError::Corrupt(message)) => {
                 let backup = unique_path(&self.directory, "corrupt.json");
@@ -236,6 +254,7 @@ impl SettingsStore {
                 Ok(LoadedSettings {
                     settings: Settings::default(),
                     revision: None,
+                    hint_launch_count: 0,
                     warning: Some(format!(
                         "△ {message}。{} に退避し、既定値を読み込みました。",
                         backup.display()
@@ -277,16 +296,22 @@ impl SettingsStore {
         })?;
         let settings = decode(&bytes).map_err(DecodeError::message)?;
         let original = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
-        let revision = self.write(&settings, Some(original))?;
+        let count = revision.map(hint_launch_count).transpose()?.unwrap_or(0);
+        let revision = self.write_with_launch_count(&settings, Some(original), Some(count))?;
         Ok(LoadedSettings {
             settings,
             revision: Some(revision),
             warning: None,
+            hint_launch_count: count,
         })
     }
 
     // Caller holds the lock from the read/version check through replacement.
     fn write(&self, config: &Settings, original: Option<&str>) -> Result<String, String> {
+        self.write_with_launch_count(config, original, None)
+    }
+
+    fn write_with_launch_count(&self, config: &Settings, original: Option<&str>, count: Option<u8>) -> Result<String, String> {
         if config.schema_version != SCHEMA_VERSION {
             return Err("対応していない schema の設定は保存できません。".to_string());
         }
@@ -303,6 +328,9 @@ impl SettingsStore {
         let known: BTreeMap<String, Box<serde_json::value::RawValue>> =
             serde_json::from_str(&known).map_err(|error| error.to_string())?;
         fields.extend(known);
+        // Rust owns this metadata: JS snapshots cannot reset or forge the count.
+        let count = count.unwrap_or(original.map(hint_launch_count).transpose()?.unwrap_or(0));
+        fields.insert("settings_hint_launches".into(), serde_json::value::RawValue::from_string(count.to_string()).map_err(|e| e.to_string())?);
         let json = serde_json::to_string_pretty(&fields)
             .map_err(|error| format!("設定を変換できません：{error}"))?;
         let temporary_path = unique_path(&self.directory, "tmp");
@@ -322,6 +350,12 @@ impl SettingsStore {
             .map_err(|error| format!("設定ファイルを置き換えられません：{error}"))?;
         Ok(json)
     }
+}
+
+// decode() validates the optional metadata before this helper is called.
+fn hint_launch_count(original: &str) -> Result<u8, String> {
+    let fields: BTreeMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(original.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())?;
+    fields.get("settings_hint_launches").map(|value| serde_json::from_str(value.get()).map_err(|e| e.to_string())).transpose().map(|count| count.unwrap_or(0))
 }
 
 // Bound synchronous IPC waiting to 300 ms; do not retry permanent failures.
@@ -949,4 +983,73 @@ mod tests {
         assert!(store.save(&config, None).is_err());
         assert!(!store.path().exists());
     }
+    #[test]
+    fn first_save_and_three_subsequent_launches_then_saturation() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        for _ in 0..2 {
+            let absent = store.load_session(true).unwrap();
+            assert!(absent.revision.is_none());
+            assert_eq!(absent.hint_launch_count, 0);
+            assert!(!store.path().exists());
+        }
+        let first = store.save(&Settings::default(), None).unwrap();
+        assert_eq!(hint_launch_count(&first).unwrap(), 0);
+        for expected in [1, 2, 3, 4, 4] {
+            let loaded = store.load_session(true).unwrap();
+            assert_eq!(loaded.hint_launch_count, expected);
+            let revision = loaded.revision.unwrap();
+            assert_eq!(hint_launch_count(&revision).unwrap(), expected);
+            // Reload and saving edits never increase/reset startup metadata.
+            assert_eq!(store.load().unwrap().hint_launch_count, expected);
+            let saved = store.save(&Settings::default(), Some(&revision)).unwrap();
+            assert_eq!(hint_launch_count(&saved).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn old_json_and_bom_load_without_counter_and_preserve_opaque_fields_on_startup() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        fs::create_dir_all(&store.directory).unwrap();
+        let original = "\u{feff}{\"top_str\":\"旧形式\",\"future\":18446744073709551615}";
+        fs::write(store.path(), original).unwrap();
+        let old = store.load().unwrap();
+        assert_eq!(old.hint_launch_count, 0);
+        assert_eq!(old.revision.as_deref(), Some(original));
+        let started = store.load_session(true).unwrap();
+        assert_eq!(started.hint_launch_count, 1);
+        assert_eq!(started.settings.top_str, "旧形式");
+        assert!(started.revision.unwrap().contains("18446744073709551615"));
+    }
+
+    #[test]
+    fn invalid_hint_metadata_is_rejected_and_quarantined() {
+        for count in ["-1", "5", "256", "1.5", "null", "true", "\"1\""] {
+            let json = format!("{{\"settings_hint_launches\":{count}}}");
+            assert!(decode(json.as_bytes()).is_err(), "{count}");
+            let directory = TestDirectory::new();
+            let store = directory.store();
+            fs::create_dir_all(&store.directory).unwrap();
+            fs::write(store.path(), json).unwrap();
+            let loaded = store.load_session(true).unwrap();
+            assert!(loaded.revision.is_none());
+            assert!(loaded.warning.unwrap().contains("退避"));
+        }
+    }
+
+    #[test]
+    fn imports_keep_destination_hint_count() {
+        let directory = TestDirectory::new();
+        let store = directory.store();
+        let source = directory.0.join("legacy.json");
+        fs::write(&source, LEGACY_JSON).unwrap();
+        store.save(&Settings::default(), None).unwrap();
+        let started = store.load_session(true).unwrap();
+        let imported = store.import_legacy(&source, started.revision.as_deref()).unwrap();
+        assert_eq!(imported.hint_launch_count, 1);
+        assert_eq!(store.load().unwrap().hint_launch_count, 1);
+        assert_eq!(fs::read(source).unwrap(), LEGACY_JSON);
+    }
+
 }
