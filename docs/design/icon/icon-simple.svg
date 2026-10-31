@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>estamp アプリアイコン 案A・簡略版</title>
+  <desc>32px以下向け。透明背景に朱色の円枠と二本の水平線。</desc>
+  <g fill="none" stroke="#C74332" stroke-width="24">
+    <circle cx="128" cy="128" r="84"/>
+    <path d="M49 96H207M49 160H207"/>
+  </g>
+</svg>

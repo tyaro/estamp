@@ -1,13 +1,14 @@
 <script lang="ts">
   import { settings,type LoadedSettings } from './store';
   import { onMount, tick } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { Image } from '@tauri-apps/api/image';
   import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
   import { describeDate, editDate, formatStampDate, refreshDate, restoreDate, todayState } from './date.js';
   import { saveSettings, settingsSnapshot } from './save.js';
   import { loadStampFonts, loadUiFonts } from './fonts.js';
-  import { buildStampSvg, renderStampImage, validateImageSettings } from './stampImage.js';
+  import { buildStampSvg, hasLongStampLine, renderStampImage, splitStampText, validateImageSettings } from './stampImage.js';
   import { markPerformance } from './performance.js';
   import Licenses from './Licenses.svelte';
   import { version } from '../package.json';
@@ -17,6 +18,92 @@
   // Keep the raw IME draft independent of the last validated date.
   let dateDraft = dateState.input;
   let fontsReady = false;
+  let settingsOpen = false;
+  let stampButton: HTMLButtonElement;
+  let aboutHeading: HTMLHeadingElement;
+  let hintLaunchCount = 0;
+  let changingSettings = false;
+  let settingsHeading: HTMLHeadingElement;
+  let copyError: HTMLParagraphElement;
+  let viewport: HTMLDivElement;
+  let initialLoad = true;
+  let settingsUnsaved = false;
+  const changeSettings = async (open: boolean) => {
+    if (disposed || changingSettings) return;
+    changingSettings = true;
+    try {
+      await invoke('set_settings_expanded', { expanded: open });
+      if (disposed) return;
+      settingsOpen = open;
+      await tick();
+      if (open) {
+        settingsHeading?.focus({ preventScroll: true });
+        settingsHeading?.scrollIntoView({ block: 'nearest' });
+      } else {
+        if (viewport) viewport.scrollTop = 0;
+        stampButton?.focus();
+      }
+    } catch (error) {
+      if (!disposed) storageMessage = `× 設定ウィンドウを変更できません：${String(error)}`;
+    } finally {
+      changingSettings = false;
+    }
+  };
+  const openSettings = () => changeSettings(true);
+  const closeSettings = () => changeSettings(false);
+  const toggleSettings = () => changeSettings(!settingsOpen);
+  const showMenu = async (keyboard = false) => {
+    try { await invoke('show_settings_menu', { keyboard }); }
+    catch (error) { if (!disposed) storageMessage = `× メニューを表示できません：${String(error)}`; }
+  };
+  const contextMenu = (event: MouseEvent) => {
+    // Suppress the production WebView2 menu even if native IPC fails.
+    event.preventDefault();
+    // Shift+F10 can also synthesize contextmenu: keydown already opened it.
+    if (event.button === 2 || !keyboardMenuActive) void showMenu();
+  };
+  let keyboardMenuActive = false;
+  const settingsKeyup = () => { keyboardMenuActive = false; };
+  const settingsKeydown = (event: KeyboardEvent) => {
+    if (event.isComposing || composing) return;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (!event.repeat) void toggleSettings();
+    } else if ((event.shiftKey && event.key === 'F10' && !event.altKey && !event.ctrlKey && !event.metaKey)
+      || event.key === 'ContextMenu' || event.key === 'Apps') {
+      event.preventDefault();
+      keyboardMenuActive = true;
+      if (!event.repeat) void showMenu(true);
+    } else if (event.key === 'Escape' && settingsOpen) {
+      event.preventDefault();
+      void closeSettings();
+    }
+  };
+  const focusCopyError = () => {
+    copyError?.focus({ preventScroll: true });
+    copyError?.scrollIntoView({ block: 'start' });
+  };
+  const menuAction = async (action: string) => {
+    if (disposed) return;
+    if (action === 'settings') await toggleSettings();
+    else if (action === 'copy') await clipboardCopy();
+    else if (action === 'today') resetDate();
+    else if (action === 'about') {
+      await openSettings();
+      if (disposed || !settingsOpen) return;
+      aboutHeading?.focus({ preventScroll: true });
+      aboutHeading?.scrollIntoView({ block: 'start' });
+    }
+  };
+  // The first click copies immediately. The browser's click.detail excludes the
+  // second click of a double-click; dblclick opens settings using the OS interval.
+  const stampClick = (event: MouseEvent) => {
+    if (event.detail > 1) return;
+    return clipboardCopy();
+  };
+  const stampDoubleClick = (event: MouseEvent) => {
+    if (event.button === 0) void openSettings();
+  };
   $: str_date = formatStampDate(dateState.date, $settings.date_format);
   $: stampSvg = fontsReady ? buildStampSvg($settings, str_date) : '';
   $: imageError = (() => {
@@ -87,6 +174,9 @@
   // Independent of copy feedback: a successful copy must not hide a save error.
   $: startupIssue = fontMessage ? '× 書体エラー'
     : storageMessage.startsWith('×') ? '× 設定エラー'
+    : dateState.error || imageError ? '× 入力エラー\n（Alt+S）'
+    // First-save guidance remains below the seal and takes priority over edits.
+    : !settingsUnsaved && dirty ? '△ 変更未保存\n（Alt+S）'
     : storageMessage.includes('△') ? '△ 設定に注意' : '';
 
   const prepareFonts = async () => {
@@ -111,6 +201,10 @@
     dateDraft = dateState.input;
     savedSnapshot = JSON.stringify(settingsSnapshot($settings, dateState));
     revision = result.revision;
+    hintLaunchCount = result.hint_launch_count ?? 0;
+    // Rust returns null only for an absent file or after successful quarantine.
+    // Valid legacy settings in the config directory already have a revision.
+    settingsUnsaved = result.revision === null;
     storageMessage = result.warning ?? '○ 設定を読み込みました';
     ready = true;
   };
@@ -120,12 +214,15 @@
     refreshToday();
     busy = true;
     try {
+      const firstSave = settingsUnsaved;
       const snapshot = JSON.stringify(settingsSnapshot($settings, dateState));
       // Save a snapshot; do not replace edits made while IPC is pending.
       revision = await saveSettings(settings, dateState, revision, args => invoke<string>("save", args));
+      settingsUnsaved = false;
       savedSnapshot = snapshot;
       dirty = !!dateState.error || JSON.stringify(settingsSnapshot($settings, dateState)) !== snapshot;
       storageMessage = dirty ? '△ 未保存の変更があります' : '○ 保存しました';
+      if (firstSave && !dirty && !dateState.error && !imageError && !fontMessage && !copyFeedback.startsWith('×')) await closeSettings();
     } catch (error) {
       storageMessage = `× 保存に失敗しました：${String(error)}`;
     } finally {
@@ -144,15 +241,19 @@
   };
 
   const load = async () => {
+    const startup = initialLoad;
+    initialLoad = false;
     busy = true;
     try {
       const result = await invoke<LoadedSettings>("load");
       if (disposed) return;
       applyLoaded(result);
+      if (startup && settingsUnsaved) await openSettings();
     } catch (error) {
       if (disposed) return;
       ready = false;
       storageMessage = `× 設定を読み込めませんでした：${String(error)}`;
+      if (startup) await openSettings();
     } finally {
       if (!disposed) {
         await refreshLegacy();
@@ -180,16 +281,29 @@
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (!disposed) markPerformance('first-window-paint');
     }));
+    document.title = '電子印 — 右クリックで設定';
+    let unlisten: UnlistenFn | undefined;
+    void listen<string>('settings-menu-action', event => { void menuAction(event.payload); },
+      { target: { kind: 'WebviewWindow', label: 'main' } }).then(stop => {
+        if (disposed) stop(); else unlisten = stop;
+      }).catch(error => { if (!disposed) storageMessage = `× メニューを準備できません：${String(error)}`; });
     void load();
     void prepareFonts();
     const timer = window.setInterval(refreshToday, 1000);
     window.addEventListener('focus', refreshToday);
+    window.addEventListener('keydown', settingsKeydown);
+    window.addEventListener('keyup', settingsKeyup);
+    window.addEventListener('contextmenu', contextMenu);
     document.addEventListener('visibilitychange', refreshToday);
     return () => {
       disposed = true;
+      unlisten?.();
       window.clearTimeout(copyFeedbackTimer);
       window.clearInterval(timer);
       window.removeEventListener('focus', refreshToday);
+      window.removeEventListener('keydown', settingsKeydown);
+      window.removeEventListener('keyup', settingsKeyup);
+      window.removeEventListener('contextmenu', contextMenu);
       document.removeEventListener('visibilitychange', refreshToday);
     };
   });
@@ -225,12 +339,13 @@
     }
   };
 </script>
-<div class="app-viewport">
-  <div class="main">
+<div class="app-viewport" bind:this={viewport}>
+  <div class="main" class:compact-caption={(settingsUnsaved && !settingsOpen) || (!settingsUnsaved && hintLaunchCount <= 3)}>
     <div class="stamp-box">
-      <button class="stamp-copy" type="button" aria-label="印影をコピー"
-        disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
-        aria-busy={copying} on:click={clipboardCopy}>
+      <button class="stamp-copy" type="button" aria-label="印影をコピー。右クリックまたはAlt+Sで設定"
+        title="印影をコピー。右クリックまたはAlt+Sで設定" bind:this={stampButton}
+        aria-disabled={composing || busy || !ready || !fontsReady || copying || !!dateState.error || !!imageError}
+        aria-busy={copying} on:click={stampClick} on:dblclick={stampDoubleClick}>
         {#if fontsReady}
           {@html stampSvg}
         {:else}
@@ -242,31 +357,47 @@
         class:feedback-visible={!!copyFeedback && !copyFeedback.startsWith('×')}
         role="status" aria-live="polite" aria-atomic="true">{copyFeedback.startsWith('×') ? '' : copyFeedback}</p>
       <p class="stamp-feedback copy-feedback" class:feedback-visible={copyFeedback.startsWith('×')}
-        role="alert" aria-live="assertive" aria-atomic="true">{copyFeedback.startsWith('×') ? copyFeedback : ''}</p>
+        role="alert" aria-live="assertive" aria-atomic="true">{#if copyFeedback.startsWith('×')}{copyFeedback}<br>詳細（Alt+S）{/if}</p>
       <p class="stamp-feedback startup-issue" class:storage-warning={startupIssue.startsWith('△')}
         class:feedback-visible={!!startupIssue}
         role="alert" aria-live="assertive" aria-atomic="true">{startupIssue}</p>
     </div>
   </div>
+  {#if settingsUnsaved && !settingsOpen}
+    <p class="unsaved-settings storage-warning" role="status">△ 設定が未保存です（Alt+S）</p>
+  {/if}
+  {#if !settingsUnsaved && hintLaunchCount <= 3}
+    <p class="settings-hint">右クリックで設定</p>
+  {/if}
+  <div hidden={!settingsOpen}>
   {#if storageMessage}
     <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
-      class:storage-success={storageMessage.startsWith('○')} role="status">{storageMessage}</p>
+      class:storage-success={storageMessage.startsWith('○')} aria-hidden="true">{storageMessage}</p>
   {/if}
   {#if copyMessage}
-    <p class="storage-message" class:storage-warning={copyMessage.startsWith('△')}
+    <p id="copy-error" class="storage-message" tabindex="-1" bind:this={copyError}
+      class:storage-warning={copyMessage.startsWith('△')}
       class:storage-success={copyMessage.startsWith('○')}>{copyMessage}</p>
   {/if}
   {#if fontMessage}
     <p class="storage-message" role="alert">{fontMessage}</p>
     <div class="retry"><button type="button" on:click={prepareFonts}>書体を再読込</button></div>
   {/if}
-  <section class="settings-panel" aria-labelledby="settings-heading">
-    <h1 id="settings-heading">印影の設定</h1>
+  <section id="settings-panel" class="settings-panel" aria-labelledby="settings-heading">
+    <h1 id="settings-heading" tabindex="-1" bind:this={settingsHeading}>印影の設定</h1>
+    <button type="button" on:click={closeSettings}>閉じる</button>
+    {#if copyFeedback.startsWith('×')}
+      <button type="button" on:click={focusCopyError}>コピー失敗の詳細へ</button>
+    {/if}
+    {#if settingsUnsaved}
+      <p class="first-settings" role="status">はじめに氏名などを入力し保存してください</p>
+    {/if}
     <fieldset class="menu" disabled={busy || !ready}
       on:compositionstart={() => composing = true} on:compositionend={finishComposition}>
       <legend>文字と日付</legend>
       <label for="top-text">上段の文字列</label>
-      <input id="top-text" bind:value={$settings.top_str}>
+      <input id="top-text" aria-describedby="top-text-warning" bind:value={$settings.top_str}>
+      <p id="top-text-warning" class="text-warning" role="status">{hasLongStampLine($settings.top_str) ? '△ 8文字を超えるため縮小します。空白で2行に分けられます' : ''}</p>
       <label for="top-size">上段の文字サイズ</label>
       <input id="top-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.top_font_size}>
 
@@ -288,17 +419,24 @@
       </select>
 
       <label for="bottom-text">下段の文字列</label>
-      <input id="bottom-text" bind:value={$settings.btm_str}>
+      <input id="bottom-text" aria-describedby="bottom-text-warning" bind:value={$settings.btm_str}>
+      <p id="bottom-text-warning" class="text-warning" role="status">{hasLongStampLine($settings.btm_str) ? '△ 8文字を超えるため縮小します。空白で2行に分けられます' : ''}</p>
       <label for="bottom-size">下段の文字サイズ</label>
       <input id="bottom-size" type="number" min="1" max="400" step="1" aria-describedby="size-help image-error" bind:value={$settings.btm_font_size}>
       <p id="size-help" class="hint">文字サイズ：1〜400の整数。印影に収まるよう自動調整します。</p>
       <label for="output-size">出力サイズ（px）</label>
-      <input id="output-size" type="number" min="1" max="4096" step="1" aria-describedby="output-help image-error" bind:value={$settings.output_size}>
+      <input id="output-size" type="number" min="1" max="4096" step="1" aria-describedby="output-size-warning output-help image-error" bind:value={$settings.output_size}>
+      <p id="output-size-warning" class="text-warning" role="status">{$settings.output_size < 140 && (splitStampText($settings.top_str).length === 2 || splitStampText($settings.btm_str).length === 2) ? '△ 2行の氏名は140px以上で読みやすくなります' : ''}</p>
       <p id="output-help" class="hint">1〜4096pxの整数。画面の印影は100pxです。</p>
     </fieldset>
     <p id="image-error" class="date-error" role="alert">{imageError}</p>
     <button class="save" type="button" disabled={composing || busy || !ready || !!dateState.error || !!imageError} on:click={save}>保存</button>
-    {#if dirty && (!storageMessage || storageMessage.startsWith('○'))}
+    {#if storageMessage}
+      <p class="storage-message" class:storage-warning={storageMessage.startsWith('△')}
+        class:storage-success={storageMessage.startsWith('○')}
+        role={storageMessage.startsWith('×') ? 'alert' : 'status'}>{storageMessage}</p>
+    {/if}
+    {#if (dirty || settingsUnsaved) && storageMessage !== '△ 未保存の変更があります'}
       <p class="storage-message storage-warning" role="status">△ 未保存の変更があります</p>
     {/if}
     <div class="storage-actions">
@@ -315,15 +453,22 @@
     </div>
   </section>
   <section class="about" aria-labelledby="about-heading">
-    <h2 id="about-heading">estampについて</h2>
+    <h2 id="about-heading" tabindex="-1" bind:this={aboutHeading}>estampについて</h2>
     <p>バージョン {version}</p>
     <p>画像の日付印を作るアプリ</p>
     <p>発行元：Banto Works</p>
     <Licenses />
   </section>
+  </div>
 </div>
 
 <style>
+  .main.compact-caption { height: 100px; }
+  .unsaved-settings, .settings-hint { padding: 0 8px; text-align: center; line-height: 15px; }
+  .settings-hint { color: #5F6470; }
+  .first-settings { margin: 8px 0; }
+  .text-warning { color: #8A5700; }
+  .text-warning:empty { display: none; }
   /* Preserve the seal-only startup area, including its existing 5px top gap. */
   .main {
     text-align: center;
@@ -331,9 +476,9 @@
     justify-content: center;
     align-items: flex-start;
     margin-top: 5px;
-    width: 240px;
+    width: 250px;
     max-width: 100%;
-    height: 125px;
+    height: 110px;
   }
   .stamp-copy {
     padding: 0;
@@ -362,7 +507,7 @@
     background: var(--background);
   }
   .copy-feedback { bottom: 0; }
-  .startup-issue { top: 0; }
+  .startup-issue { top: 0; white-space: pre-line; }
   .app-viewport {
     height: 100vh;
     overflow-y: auto;
@@ -370,6 +515,8 @@
   }
   .settings-panel, .about { padding: 16px; min-width: 0; }
   h1, h2 { color: var(--primary); font-size: 16px; margin: 0 0 16px; }
+  /* Programmatic focus after a pointer-opened native menu must stay visible. */
+  #settings-heading:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
   .menu { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; min-width: 0; }
   legend { font-weight: 700; margin-bottom: 8px; padding: 0; }
   label { margin-top: 8px; }

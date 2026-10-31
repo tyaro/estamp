@@ -10,13 +10,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json && yarn run test:date && yarn run test:save && yarn run test:app && yarn run test:fonts && yarn run test:image && yarn run test:ui",
+    "check": "svelte-check --tsconfig ./tsconfig.json && yarn run test:date && yarn run test:save && yarn run test:app && yarn run test:fonts && yarn run test:image && yarn run test:ui && yarn run test:icons",
     "test:date": "node --test tests/date.test.js",
     "test:save": "node --test tests/save.test.js",
     "test:app": "node --test tests/app.test.js",
     "test:image": "node --test tests/stampImage.test.js",
     "test:ui": "node --test tests/ui.test.js",
     "test:fonts": "node --test tests/fonts.test.js",
+    "test:icons": "node --test tests/icons.test.js",
     "tauri": "tauri"
   },
   "dependencies": {

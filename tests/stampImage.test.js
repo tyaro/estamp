@@ -1,10 +1,88 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { STAMP_FONT, buildStampSvg, renderStampImage, validateImageSettings } from '../src/stampImage.js';
+import { STAMP_FONT, buildStampSvg, hasLongStampLine, splitStampText, renderStampImage, validateImageSettings } from '../src/stampImage.js';
+import { bundledStampMetrics } from './helpers/fontMetrics.js';
 
 const config = { top_str: '部署名<&"', btm_str: '髙橋渡邊長い日本語氏名', top_font_size: 80, mid_font_size: 60, btm_font_size: 80, output_size: 100 };
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+test('half/full-width spaces split only names into two balanced lines; warnings count each Unicode line', () => {
+  for (const space of [' ', '　', ' 　']) {
+    assert.deepEqual(splitStampText(`国際事業推進部${space}髙橋渡邊`), ['国際事業推進部', '髙橋渡邊']);
+    const svg = buildStampSvg({ ...config, top_str: `国際事業推進部${space}髙橋渡邊`, btm_str: `山田${space}太郎` }, '2025 10 22');
+    assert.equal((svg.match(/<text /g) ?? []).length, 5);
+    assert.match(svg, />2025 10 22<\/text>/);
+  }
+  assert.equal(splitStampText(' 営業 第一　髙橋 太郎　').length, 2);
+  assert.equal(hasLongStampLine('一二三四五六七八'), false);
+  assert.equal(hasLongStampLine('一二三四五六七八九'), true);
+  assert.equal(hasLongStampLine('国際事業推進部 髙橋渡邊'), false);
+  assert.equal(hasLongStampLine('𠮷'.repeat(8)), false);
+  assert.equal(hasLongStampLine('𠮷'.repeat(9)), true);
+});
+
+test('100px long-name geometry uses bundled glyph bounds: two lines, >=9px ink and >=75% width', t => {
+  const context = bundledStampMetrics();
+  const svg = buildStampSvg({ ...config, top_str: '国際事業推進部 髙橋渡邊', btm_str: '国際事業推進部 髙橋渡邊' }, '2025.10.22', { context });
+  const rows = [...svg.matchAll(/font-size="([\d.]+)" transform="translate\(200 ([\d.e+-]+)\) scale\(([\d.e+-]+) ([\d.e+-]+)\)"[^>]*>([^<]*)<\/text>/g)];
+  assert.equal(rows.length, 5);
+  for (const index of [0, 1, 3, 4]) {
+    const [, size, baseline, sx, sy, text] = rows[index];
+    context.font = `700 ${size}px "${STAMP_FONT}"`;
+    const metrics = context.measureText(text);
+    const height = (metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent) * Number(sy) / 4;
+    const compression = Number(sx) / Number(sy);
+    t.diagnostic(`${text}: height=${height.toFixed(3)}px, compression=${(compression * 100).toFixed(3)}%`);
+    assert.ok(height >= 9, `ink height ${height}`);
+    assert.ok(compression >= 0.75);
+    assert.ok(metrics.width * Number(sx) <= 220 + 1e-9);
+    const top = Number(baseline) - metrics.actualBoundingBoxAscent * Number(sy);
+    const bottom = Number(baseline) + metrics.actualBoundingBoxDescent * Number(sy);
+    const band = index < 2 ? [60, 140] : [260, 340];
+    assert.ok(top >= band[0] - 1e-9 && bottom <= band[1] + 1e-9);
+  }
+});
+
+test('fitting stages uniformly shrink, then compress, then uniformly shrink without passing 75%', () => {
+  for (const [count, expectedCompression] of [[2, 1], [3, 220 / 240], [11, 0.75]]) {
+    const svg = buildStampSvg({ ...config, top_str: '字'.repeat(count) }, '2025.10.22', { context: null });
+    const [, sx, sy] = svg.match(/scale\(([\d.e+-]+) ([\d.e+-]+)\)/);
+    assert.ok(Math.abs(Number(sx) / Number(sy) - expectedCompression) < 1e-9);
+    assert.ok(Number(sy) <= 80 / 96);
+  }
+});
+
+for (const text of ['営業部 aaa', '営業部 。']) {
+  test(`mixed-height bundled glyphs stay in separate line slots and vertical bands: ${text}`, t => {
+    const context = bundledStampMetrics();
+    for (const value of [text, splitStampText(text).reverse().join(' ')]) {
+      const svg = buildStampSvg({ ...config, top_str: value, btm_str: value }, '2025.10.22', { context });
+      const rows = [...svg.matchAll(/font-size="([\d.]+)" transform="translate\(200 ([\d.e+-]+)\) scale\(([\d.e+-]+) ([\d.e+-]+)\)"[^>]*>([^<]*)<\/text>/g)];
+      assert.equal(rows.length, 5);
+      for (const [start, bandTop] of [[0, 60], [3, 260]]) {
+        const bounds = rows.slice(start, start + 2).map(([, size, baseline, sx, sy, line]) => {
+          context.font = `700 ${size}px "${STAMP_FONT}"`;
+          const metrics = context.measureText(line);
+          assert.ok(Number(sx) / Number(sy) >= 0.75);
+          return {
+            top: Number(baseline) - metrics.actualBoundingBoxAscent * Number(sy),
+            bottom: Number(baseline) + metrics.actualBoundingBoxDescent * Number(sy),
+          };
+        });
+        t.diagnostic(`${value}, band y=${bandTop}..${bandTop + 80}: ${JSON.stringify(bounds)}`);
+        for (const [index, { top, bottom }] of bounds.entries()) {
+          const slotTop = bandTop + index * 42;
+          assert.ok(top >= slotTop - 1e-9, `line ${index + 1} top ${top} >= ${slotTop}`);
+          assert.ok(bottom <= slotTop + 38 + 1e-9, `line ${index + 1} bottom ${bottom} <= ${slotTop + 38}`);
+        }
+        assert.ok(bounds[0].bottom + 4 <= bounds[1].top + 1e-9, 'two lines keep at least a 4-unit gap');
+        assert.ok(Math.max(...bounds.map(({ top, bottom }) => (bottom - top) / 4)) >= 9);
+      }
+    }
+  });
+}
+
 function deferred() {
   let resolve;
   const promise = new Promise(ok => { resolve = ok; });
@@ -46,7 +124,9 @@ test('one escaped SVG source uses private bundled alias, all rows, and fits long
 });
 
 test('wide W text and size 400 fit every band and the circular frame using measured ink bounds', () => {
-  const text = 'W'.repeat(30);
+  // Five wide glyphs exercise both fitting stages while remaining physically
+  // compatible with the 9px floor. Longer lines have a separate floor test.
+  const text = 'W'.repeat(5);
   for (const size of [80, 400]) {
     const calls = [];
     const context = {
@@ -82,6 +162,18 @@ test('wide W text and size 400 fit every band and the circular frame using measu
       }
     }
   }
+});
+
+test('automatic shrinking stops at 9px and 75% even when an unbroken name cannot fit', () => {
+  for (const count of [11, 30]) {
+    const svg = buildStampSvg({ ...config, top_str: 'W'.repeat(count) }, '2025.10.22', { context: null });
+    const [, sx, sy] = svg.match(/scale\(([\d.e+-]+) ([\d.e+-]+)\)/);
+    assert.ok(Math.abs(Number(sx) / Number(sy) - 0.75) < 1e-9);
+    assert.ok(Math.abs(80 * 1.2 * Number(sy) / 4 - 9) < 1e-9);
+    assert.ok(count * 80 * 1.2 * Number(sx) > 220);
+  }
+  const tiny = buildStampSvg({ ...config, top_str: '字', top_font_size: 1 }, '2025.10.22', { context: null });
+  assert.match(tiny, /scale\(1 1\)/, 'explicitly small user font sizes are not enlarged');
 });
 
 test('DOM-free measurement fallback is deterministic, including empty rows', () => {

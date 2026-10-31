@@ -22,14 +22,13 @@
       {
         "label": "main",
         "fullscreen": false,
-        "resizable": true,
-        "title": "電子印",
+        "resizable": false,
+        "maximizable": false,
+        "title": "電子印 — 右クリックで設定",
         "width": 250,
         "height": 120,
         "minWidth": 250,
-        "minHeight": 120,
-        "maxWidth": 250,
-        "maxHeight": 310
+        "maxWidth": 250
       }
     ]
   },

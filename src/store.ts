@@ -18,6 +18,7 @@ export type LoadedSettings = {
 	settings: Setting,
 	revision: string | null,
 	warning: string | null,
+	hint_launch_count: number,
 }
 
 

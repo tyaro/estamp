@@ -5,10 +5,11 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { parse } from 'svelte/compiler';
 import { get, writable } from 'svelte/store';
-import { buildStampSvg, validateImageSettings } from '../src/stampImage.js';
+import { buildStampSvg, hasLongStampLine, validateImageSettings } from '../src/stampImage.js';
 import * as dates from '../src/date.js';
 import { saveSettings, settingsSnapshot } from '../src/save.js';
-import { mountApp } from './helpers/appDom.js';
+import { appCss, mountApp } from './helpers/appDom.js';
+import { bundledStampMetrics } from './helpers/fontMetrics.js';
 
 // Execute the production App handlers, including their post-await code. Only the
 // DOM flush, renderer and Tauri boundary are fakes; this is not a WebView test.
@@ -99,11 +100,13 @@ function app({
       if (command === 'load') return await read();
       if (command === 'import_legacy') return await importLegacy(args.revision);
       if (command === 'legacy_available') return await legacyAvailable();
+      if (['set_settings_expanded', 'show_settings_menu'].includes(command)) return;
       assert.equal(command, 'save');
       events.sent.push(args.config);
       events.revisions.push(args.revision);
       return await persist(args.config, args.revision);
     } },
+    '@tauri-apps/api/event': { listen: async () => () => {} },
     '@tauri-apps/api/image': { Image: { new: async (rgba, width, height) => { assert.ok(rgba instanceof Uint8Array); assert.equal(rgba.length, width * height * 4); await boundary('image'); return image; } } },
     '@tauri-apps/plugin-clipboard-manager': { writeImage: async value => { assert.equal(value, image); await boundary('write'); events.writes.push(value.svg); } },
     '../package.json': { version: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version },
@@ -113,7 +116,7 @@ function app({
     './save.js': { saveSettings, settingsSnapshot },
     './fonts.js': { loadStampFonts: async () => { await boundary('fonts'); }, loadUiFonts: async () => {} },
     './performance.js': { markPerformance() {} },
-    './stampImage.js': { buildStampSvg, validateImageSettings, renderStampImage: async (text, size) => {
+    './stampImage.js': { buildStampSvg, hasLongStampLine, validateImageSettings, renderStampImage: async (text, size) => {
       await boundary('fonts');
       events.renders.push(text); image.svg = text; await boundary('render');
       return { rgba: new Uint8Array(size * size * 4), width: size, height: size };
@@ -167,6 +170,311 @@ function app({
     advance: value => { now = value; },
   };
 }
+
+function settingsFocus(ui) {
+  ui.run(`
+    const focusCalls = [];
+    settingsHeading = { focus: () => focusCalls.push('heading'), scrollIntoView: () => focusCalls.push('scroll') };
+    stampButton = { focus: () => focusCalls.push('button') };
+    viewport = { scrollTop: 400 };
+  `);
+}
+
+test('first launch opens and focuses settings; closing without save repeats on restart', async () => {
+  for (let launch = 0; launch < 2; launch++) {
+    const ui = app();
+    settingsFocus(ui);
+    await ui.load();
+    assert.equal(ui.run('settingsOpen'), true);
+    assert.equal(ui.run('settingsUnsaved'), true);
+    assert.equal(ui.run("focusCalls.join(',')"), 'heading,scroll');
+    await ui.run('closeSettings()');
+    assert.equal(ui.run('settingsOpen'), false);
+    assert.equal(ui.run('settingsUnsaved'), true);
+    assert.equal(ui.run('viewport.scrollTop'), 0);
+    assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+    assert.equal(ui.events.sent.length, 0);
+  }
+});
+
+test('successful save/import ends first-launch guidance; saved and legacy revisions stay closed', async () => {
+  const ui = app({ pause: '' });
+  await ui.load();
+  await ui.save();
+  assert.equal(ui.run('settingsUnsaved'), false);
+  for (const revision of ['saved JSON', 'legacy JSON without schema']) {
+    const restarted = app({ read: async () => ({ settings: initialSettings(), revision, warning: null }) });
+    await restarted.load();
+    assert.equal(restarted.run('settingsOpen'), false);
+    assert.equal(restarted.run('settingsUnsaved'), false);
+  }
+  const imported = app({ legacyAvailable: async () => true,
+    importLegacy: async () => ({ settings: initialSettings(), revision: 'imported JSON', warning: null }) });
+  await imported.load();
+  imported.run('confirmingImport = true');
+  await imported.importLegacy();
+  assert.equal(imported.run('settingsUnsaved'), false);
+});
+
+test('quarantine prompts first save while hard load failure opens recovery without declaring absence', async () => {
+  const corrupt = app({ read: async () => ({ settings: initialSettings(), revision: null, warning: '△ 破損を退避しました' }) });
+  await corrupt.load();
+  assert.equal(corrupt.run('settingsOpen && settingsUnsaved'), true);
+  assert.match(corrupt.run('storageMessage'), /退避/);
+  const broken = app({ read: async () => { throw new Error('permission denied'); } });
+  await broken.load();
+  assert.equal(broken.run('settingsOpen'), true);
+  assert.equal(broken.run('settingsUnsaved'), false);
+  assert.equal(broken.run('ready'), false);
+  const failedSave = app({ persist: async () => { throw new Error('disk full'); } });
+  await failedSave.load();
+  await failedSave.save();
+  assert.equal(failedSave.run('settingsUnsaved'), true);
+});
+
+test('Alt+S opens settings and Escape/close return focus; IME and unrelated keys are ignored', async () => {
+  const ui = app({ read: async () => ({ settings: initialSettings(), revision: 'saved', warning: null }) });
+  settingsFocus(ui);
+  const cleanup = ui.mount();
+  await new Promise(setImmediate);
+  const keydown = ui.events.listeners.get('window:keydown');
+  let prevented = 0;
+  const key = properties => keydown({ key: 's', altKey: true, preventDefault: () => prevented++, ...properties });
+  for (const properties of [{ altKey: false }, { ctrlKey: true }, { shiftKey: true }, { metaKey: true }, { isComposing: true }]) key(properties);
+  assert.equal(ui.run('settingsOpen'), false);
+  key({});
+  await new Promise(setImmediate);
+  assert.equal(ui.run('settingsOpen'), true);
+  assert.equal(prevented, 1);
+  assert.equal(ui.run('focusCalls.at(-2)'), 'heading');
+  key({ key: 'Escape', altKey: false });
+  await new Promise(setImmediate);
+  assert.equal(ui.run('settingsOpen'), false);
+  assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+  key({}); await new Promise(setImmediate);
+  await ui.run('closeSettings()');
+  assert.equal(ui.run('focusCalls.at(-1)'), 'button');
+  cleanup();
+  assert.equal(ui.events.listeners.has('window:keydown'), false);
+});
+
+test('long text warnings leave save and copy enabled', async () => {
+  const ui = app({ pause: '' });
+  ui.settings.update(value => ({ ...value, top_str: '国際事業推進部門室', btm_str: '国際事業推進部 髙橋渡邊' }));
+  await ui.flush();
+  assert.equal(ui.run('imageError'), '');
+  await ui.save(); await ui.copy();
+  assert.equal(ui.events.sent.length, 1);
+  assert.equal(ui.events.writes.length, 1);
+});
+
+for (const [placement, names] of [
+  ['top only', { top_str: '営業 第一　髙橋 太郎' }],
+  ['bottom only', { btm_str: '髙橋　渡邊' }],
+  ['both', { top_str: '営業 第一', btm_str: '髙橋 渡邊' }],
+]) {
+  test(`compiled two-line warning handles 139/140px and allows copy/save: ${placement}`, async () => {
+    let copies = 0, saves = 0;
+    const ui = await mountApp({ ...initialSettings(), ...names, output_size: 140 }, {
+      revision: 'saved', clipboard: async () => { copies++; },
+      persist: async config => { saves++; return JSON.stringify(config); },
+    });
+    try {
+      ui.keydown({ key: 's', altKey: true }); await ui.tick();
+      const warning = ui.input('output-size-warning');
+      const output = ui.input('output-size');
+      const copy = ui.element(node => node.getAttribute('class')?.split(' ').includes('stamp-copy'));
+      assert.equal(warning.textContent, '');
+      for (const size of [139, 140, 100]) {
+        output.nativeValue = String(size); output.dispatch('input'); await ui.tick();
+        assert.equal(warning.textContent, size < 140 ? '△ 2行の氏名は140px以上で読みやすくなります' : '');
+        assert.equal(copy.getAttribute('aria-disabled'), 'false');
+        assert.equal(ui.button('保存').disabled, false);
+        copy.dispatch('click'); await new Promise(setImmediate); await ui.tick();
+        ui.button('保存').dispatch('click'); await new Promise(setImmediate); await ui.tick();
+      }
+      assert.equal(copies, 3);
+      assert.equal(saves, 3);
+      for (const id of ['top-text', 'bottom-text']) {
+        const input = ui.input(id);
+        input.nativeValue = '名前'; input.dispatch('input'); await ui.tick();
+      }
+      assert.equal(warning.textContent, '', 'removing the split clears the warning at 100px');
+    } finally { ui.destroy(); }
+  });
+}
+
+test('compiled output warning stays empty for single-line names, including surrounding spaces', async () => {
+  const ui = await mountApp(initialSettings());
+  try {
+    for (const text of ['名前', '国際事業推進部門室', '  髙橋　', '', '　 ']) {
+      ui.settings.update(value => ({ ...value, top_str: text, btm_str: text, output_size: 139 }));
+      await ui.tick();
+      assert.equal(ui.input('output-size-warning').textContent, '', JSON.stringify(text));
+    }
+  } finally { ui.destroy(); }
+});
+
+test('closed settings expose unsaved edits and date/size errors, then clear on revert or save', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {} });
+  try {
+    const badge = ui.element(node => node.getAttribute('class')?.split(' ').includes('startup-issue'));
+    const copy = ui.element(node => node.getAttribute('class')?.split(' ').includes('stamp-copy'));
+    const panel = ui.input('settings-heading').parentNode.parentNode;
+    const open = async () => { ui.keydown({ key: 's', altKey: true }); await ui.tick(); };
+    const close = async () => { ui.keydown({ key: 'Escape' }); await ui.tick(); assert.equal(panel.hidden, true); };
+    assert.equal(badge.textContent, '');
+    assert.equal(copy.getAttribute('aria-disabled'), 'false');
+    await open();
+    ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Alt+S）');
+    assert.equal(copy.getAttribute('aria-disabled'), 'false', 'unsaved valid edits still allow copy');
+    await open();
+    const date = ui.input('date-input');
+    date.nativeValue = 'R7.2.29'; date.dispatch('input');
+    await close();
+    assert.equal(badge.textContent, '× 入力エラー\n（Alt+S）');
+    assert.equal(copy.getAttribute('aria-disabled'), 'true');
+    assert.equal(date.value, 'R7.2.29');
+    await open();
+    ui.button('今日に戻す').dispatch('click');
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Alt+S）');
+    for (const id of ['top-size', 'date-size', 'bottom-size', 'output-size']) {
+      await open();
+      const input = ui.input(id), before = input.value;
+      input.nativeValue = '0'; input.dispatch('input');
+      await close();
+      assert.equal(badge.textContent, '× 入力エラー\n（Alt+S）', id);
+      assert.equal(copy.getAttribute('aria-disabled'), 'true', id);
+      await open();
+      input.nativeValue = before; input.dispatch('input');
+      await close();
+      assert.equal(badge.textContent, '△ 変更未保存\n（Alt+S）', id);
+      assert.equal(copy.getAttribute('aria-disabled'), 'false', id);
+    }
+    ui.settings.update(value => ({ ...value, top_str: '所属' }));
+    await ui.tick();
+    assert.equal(badge.textContent, '', 'reverting to saved settings clears the warning');
+    await open();
+    date.nativeValue = 'R7.10.22'; date.dispatch('input');
+    await close();
+    assert.equal(badge.textContent, '△ 変更未保存\n（Alt+S）', 'a valid date edit is also unsaved');
+    await open();
+    ui.button('今日に戻す').dispatch('click');
+    await close();
+    assert.equal(badge.textContent, '');
+    await open();
+    ui.settings.update(value => ({ ...value, btm_str: '田中' }));
+    await ui.tick();
+    ui.button('保存').dispatch('click');
+    await new Promise(setImmediate);
+    await close();
+    assert.equal(badge.textContent, '', 'successful save clears the warning');
+  } finally { ui.destroy(); }
+});
+
+test('startup issue prioritizes errors over first save, and first save over unsaved edits', async () => {
+  const ui = app({ pause: '' });
+  await ui.load();
+  ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+  await ui.run('closeSettings()');
+  await ui.flush();
+  assert.equal(ui.run('settingsUnsaved && dirty'), true);
+  assert.equal(ui.run('startupIssue'), '', 'existing below-seal first-save guidance is sufficient');
+  ui.edit('R7.2.29');
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 入力エラー\n（Alt+S）');
+  ui.run("storageMessage = '× 保存に失敗しました'");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 設定エラー');
+  ui.run("fontMessage = '× 書体を読み込めません'");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '× 書体エラー');
+  ui.run("fontMessage = ''; storageMessage = ''; resetDate()");
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '');
+  await ui.save();
+  ui.settings.update(value => ({ ...value, top_str: '開発部' }));
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 変更未保存\n（Alt+S）');
+  await ui.copy();
+  await ui.flush();
+  assert.equal(ui.run('startupIssue'), '△ 変更未保存\n（Alt+S）', 'successful copy does not hide unsaved edits');
+});
+
+for (const entry of ['shortcut', 'menu']) {
+  test(`compiled copy failure offers details and ${entry} scrolls/focuses the error; retry restores normal focus`, async () => {
+    let failing = true;
+    const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {
+      if (failing) throw new Error('クリップボードが使用中です');
+    } });
+    try {
+      const copy = ui.element(node => node.getAttribute('class')?.split(' ').includes('stamp-copy'));
+      const heading = ui.input('settings-heading'), panel = heading.parentNode.parentNode;
+      const open = async () => {
+        if (entry === 'shortcut') ui.keydown({ key: 's', altKey: true });
+        else await ui.menu('settings');
+        await ui.tick();
+      };
+      assert.equal(panel.hidden, true);
+      assert.equal(copy.getAttribute('aria-disabled'), 'false');
+      copy.dispatch('click');
+      await new Promise(setImmediate); await ui.tick();
+      const failure = ui.element(node => node.getAttribute('class')?.split(' ').includes('copy-feedback') && node.getAttribute('role') === 'alert');
+      assert.equal(failure.textContent, '× コピー失敗詳細（Alt+S）');
+      assert.equal(failure.childNodes.filter(node => node.nodeName === 'BR').length, 1);
+      const detail = ui.input('copy-error');
+      assert.match(detail.textContent, /^× 画像コピーに失敗しました：.*クリップボードが使用中です/);
+      assert.equal(detail.getAttribute('tabindex'), '-1');
+      assert.equal(panel.hidden, true);
+      await open();
+      assert.equal(panel.hidden, false);
+      assert.equal(heading.focused, true);
+      ui.button('コピー失敗の詳細へ').dispatch('click');
+      assert.equal(detail.focused, true);
+      assert.equal(detail.scrolled, true);
+      assert.equal(detail.scrollOptions.block, 'start');
+      assert.equal(detail.focusOptions.preventScroll, true);
+      assert.equal(heading.focused, true);
+      ui.keydown({ key: 'Escape' }); await ui.tick();
+      assert.equal(panel.hidden, true);
+      assert.equal(copy.focused, true);
+      detail.focused = false; detail.scrolled = false;
+      await open();
+      assert.equal(heading.focused && heading.scrolled, true, 'opening always targets the heading');
+      ui.button('コピー失敗の詳細へ').dispatch('click');
+      assert.equal(detail.focused && detail.scrolled, true);
+      ui.button('閉じる').dispatch('click'); await ui.tick();
+      failing = false;
+      copy.dispatch('click');
+      await new Promise(setImmediate); await ui.tick();
+      assert.equal(failure.textContent, '');
+      await open();
+      assert.equal(heading.focused && heading.scrolled, true, 'successful retry restores heading navigation');
+    } finally { ui.destroy(); }
+  });
+}
+
+test('two-line warnings and copy details fit the 100px seal at 14px with bundled UI glyphs', async () => {
+  const ui = app();
+  await ui.load();
+  const warningTexts = [];
+  ui.run('settingsUnsaved = false');
+  ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+  await ui.flush(); warningTexts.push(ui.run('startupIssue'));
+  ui.edit('R7.2.29');
+  await ui.flush(); warningTexts.push(ui.run('startupIssue'));
+  const context = bundledStampMetrics('bizudpgothic/BIZUDPGothic-Regular.ttf');
+  context.font = '400 14px "estamp BIZ UDPGothic"';
+  for (const text of [...warningTexts, '× コピー失敗\n詳細（Alt+S）']) {
+    const lines = text.split('\n');
+    assert.equal(lines.length, 2);
+    for (const line of lines) assert.ok(context.measureText(line).width <= 100 - 2 * 4 - 2, line);
+    assert.equal(lines.length * 20 + 2 * 4 + 2, 50);
+  }
+});
 
 for (const pause of ['render', 'image']) {
   for (const change of ['valid date', 'format', 'invalid date', 'midnight', 'output size']) {
@@ -298,6 +606,38 @@ test('load/save problems stay visible independently of successful copy and clear
     await ui.flush();
     assert.equal(ui.run('startupIssue'), '');
   }
+});
+
+test('compiled App shows save failure and unsaved warning immediately after Save, then success on retry', async () => {
+  let failing = true;
+  const ui = await mountApp(initialSettings(), { persist: async () => {
+    if (failing) throw new Error('書込み不可');
+    return 'saved revision';
+  } });
+  try {
+    ui.settings.update(value => ({ ...value, top_str: '営業部' }));
+    await ui.tick();
+    const save = ui.button('保存');
+    const messages = () => save.parentNode.childNodes.slice(save.parentNode.childNodes.indexOf(save) + 1)
+      .filter(node => node.nodeName === 'P');
+    assert.ok(messages().some(node => node.textContent === '△ 未保存の変更があります'));
+    save.dispatch('click');
+    await new Promise(setImmediate);
+    await ui.tick();
+    assert.ok(messages().length >= 2, 'failure result and unsaved warning stay next to Save');
+    assert.match(messages()[0].textContent, /^× 保存に失敗しました：.*書込み不可/);
+    assert.equal(messages()[0].getAttribute('role'), 'alert');
+    assert.equal(messages()[1].textContent, '△ 未保存の変更があります');
+    assert.equal(messages()[1].getAttribute('role'), 'status');
+    assert.equal(ui.input('top-text').value, '営業部');
+    failing = false;
+    save.dispatch('click');
+    await new Promise(setImmediate);
+    await ui.tick();
+    assert.equal(messages()[0].textContent, '○ 保存しました');
+    assert.equal(messages()[0].getAttribute('role'), 'status');
+    assert.equal(messages().length, 1, 'successful save clears the unsaved warning');
+  } finally { ui.destroy(); }
 });
 
 test('startup indicator also exposes load warnings and font failures', async () => {
@@ -569,7 +909,7 @@ test('App removes date watchers and ignores a load completing after unmount', as
   const before = get(ui.settings);
   ui.run('busy = true; ready = false');
   const cleanup = ui.mount();
-  assert.equal(ui.events.listeners.size, 2);
+  assert.equal(ui.events.listeners.size, 5);
   ui.advance(new Date(2026, 0, 1));
   ui.events.timer();
   assert.equal(ui.run('dateState.date'), '2026-01-01');
@@ -632,7 +972,7 @@ test('native Enter/Space activation is bound to the copy handler without duplica
     for (const child of node?.children ?? []) walk(child);
   };
   walk(ast.html);
-  const button = elements.find(node => node.name === 'button' && node.attributes.some(a => a.name === 'aria-label' && a.value?.[0]?.data === '印影をコピー'));
+  const button = elements.find(node => node.name === 'button' && node.attributes.some(a => a.name === 'aria-label' && a.value?.[0]?.data?.startsWith('印影をコピー')));
   assert.ok(button);
   assert.equal(button.attributes.find(a => a.name === 'type').value[0].data, 'button');
   assert.ok(!button.attributes.some(a => ['role', 'tabindex', 'keydown', 'keyup'].includes(a.name)));
@@ -640,7 +980,7 @@ test('native Enter/Space activation is bound to the copy handler without duplica
   assert.equal(click.expression.type, 'Identifier');
   for (const key of ['Enter', ' ']) {
     const ui = app({ pause: '' });
-    await ui.run(`${click.expression.name}()`);
+    await ui.run(`${click.expression.name}({ detail: 0 })`);
     assert.equal(ui.events.writes.length, 1, key);
     assert.equal(ui.run('copyMessage'), '○ 画像をコピーしました');
     assert.equal(ui.events.closed, 1);
@@ -801,4 +1141,264 @@ for (const [input, message] of [
   assert.equal(ui.run('dateState.error'), '');
   await ui.copy();
   assert.equal(ui.events.writes.length, 1);
+});
+
+
+const sealOf = ui => ui.element(node => node.getAttribute('class')?.split(' ').includes('stamp-copy'));
+const panelOf = ui => ui.input('settings-heading').parentNode.parentNode;
+const hintOf = ui => ui.element(node => node.getAttribute('class')?.split(' ').includes('settings-hint'));
+const expandCommands = ui => ui.commands.filter(call => call.command === 'set_settings_expanded');
+
+test('compiled Alt+S toggles, Esc restores seal focus, Ctrl+, and modified/composing/repeated keys do nothing', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {} });
+  try {
+    assert.equal(ui.document.title, '電子印 — 右クリックで設定');
+    const seal = sealOf(ui);
+    assert.equal(seal.getAttribute('aria-label'), '印影をコピー。右クリックまたはAlt+Sで設定');
+    assert.equal(seal.getAttribute('title'), seal.getAttribute('aria-label'));
+    for (const key of [
+      { key: ',', ctrlKey: true }, { key: 's' },
+      { key: 's', altKey: true, ctrlKey: true }, { key: 's', altKey: true, metaKey: true },
+      { key: 's', altKey: true, shiftKey: true }, { key: 's', altKey: true, isComposing: true },
+      { key: 's', altKey: true, repeat: true },
+    ]) ui.keydown(key);
+    await ui.tick();
+    assert.equal(panelOf(ui).hidden, true);
+    assert.equal(expandCommands(ui).length, 0);
+    assert.equal(ui.keydown({ key: 'S', altKey: true }).defaultPrevented, true);
+    await ui.tick();
+    assert.equal(panelOf(ui).hidden, false);
+    assert.equal(ui.document.activeElement, ui.input('settings-heading'));
+    ui.keydown({ key: 's', altKey: true }); await ui.tick();
+    assert.equal(panelOf(ui).hidden, true);
+    assert.equal(ui.document.activeElement, seal);
+    ui.keydown({ key: 's', altKey: true }); await ui.tick();
+    ui.keydown({ key: 'Escape' }); await ui.tick();
+    assert.equal(ui.document.activeElement, seal);
+    assert.deepEqual(expandCommands(ui).map(call => call.args.expanded), [true, false, true, false]);
+  } finally { ui.destroy(); }
+});
+
+test('compiled context menu works on seal, blank area and settings inputs and always suppresses WebView default', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {} });
+  try {
+    const menuCalls = () => ui.commands.filter(call => call.command === 'show_settings_menu');
+    for (const target of [sealOf(ui), sealOf(ui).parentNode.parentNode, ui.input('top-text')]) {
+      const event = target.dispatch('contextmenu', { button: 2 }); await ui.tick();
+      assert.equal(event.defaultPrevented, true);
+      assert.equal(menuCalls().at(-1).args.keyboard, false);
+    }
+    assert.equal(menuCalls().length, 3);
+    for (const key of [{ key: 'F10', shiftKey: true }, { key: 'ContextMenu' }, { key: 'Apps' }]) {
+      const before = menuCalls().length;
+      assert.equal(ui.keydown(key).defaultPrevented, true);
+      // A browser-synthesized contextmenu must not open a second menu.
+      assert.equal(ui.contextmenu({ button: 0 }).defaultPrevented, true);
+      ui.keydown({ ...key, repeat: true });
+      await ui.tick();
+      assert.equal(menuCalls().length, before + 1);
+      assert.equal(menuCalls().at(-1).args.keyboard, true);
+      ui.keyup(key);
+    }
+    assert.equal(panelOf(ui).hidden, true);
+    await ui.menu('settings');
+    assert.equal(ui.document.activeElement, ui.input('settings-heading'));
+    await ui.menu('about');
+    assert.equal(ui.document.activeElement, ui.input('about-heading'));
+    assert.equal(ui.input('about-heading').scrolled, true);
+    await ui.menu('settings');
+    assert.equal(panelOf(ui).hidden, true);
+  } finally { ui.destroy(); }
+});
+
+for (const [entry, keyboard] of [
+  ['right click', null], ['Shift+F10', { key: 'F10', shiftKey: true }],
+  ['menu key', { key: 'ContextMenu' }], ['Apps key', { key: 'Apps' }],
+]) {
+  test(`compiled ${entry} menu focuses the heading with an unconditional focus ring after native completion`, async () => {
+    const pending = deferred();
+    const ui = await mountApp(initialSettings(), { revision: 'saved', native: async command => {
+      if (command === 'set_settings_expanded') await pending.promise;
+    } });
+    try {
+      const seal = sealOf(ui);
+      seal.focus();
+      if (keyboard) ui.keydown(keyboard);
+      else seal.dispatch('contextmenu', { button: 2 });
+      await ui.tick();
+      assert.equal(ui.commands.at(-1).command, 'show_settings_menu');
+      assert.equal(ui.commands.at(-1).args.keyboard, keyboard !== null);
+      await ui.menu('settings');
+      assert.equal(expandCommands(ui).at(-1).args.expanded, true);
+      assert.equal(panelOf(ui).hidden, true, 'wait for Rust geometry and native focus restoration');
+      assert.equal(ui.document.activeElement, seal);
+      pending.resolve(); await ui.tick();
+      const heading = ui.input('settings-heading');
+      assert.equal(panelOf(ui).hidden, false);
+      assert.equal(ui.document.activeElement, heading);
+      assert.equal(heading.getAttribute('tabindex'), '-1');
+      assert.equal(heading.focusOptions.preventScroll, true);
+      // Check the extracted production CSS, including Svelte's scope class on
+      // the actual mounted heading. :focus must not depend on input modality.
+      const ring = appCss.match(/#settings-heading\.(svelte-[\w-]+)(?:\.\1)*:focus\s*\{([^}]+)\}/);
+      assert.ok(ring, 'heading has its own :focus rule, without :focus-visible');
+      assert.ok(heading.getAttribute('class').split(/\s+/).includes(ring[1]));
+      assert.match(ring[2], /outline:\s*2px solid var\(--focus\)/);
+      assert.match(ring[2], /outline-offset:\s*2px/);
+      await ui.menu('settings');
+      assert.equal(panelOf(ui).hidden, true);
+      assert.equal(ui.document.activeElement, seal);
+    } finally { pending.resolve(); ui.destroy(); }
+  });
+}
+
+test('compiled native copy/today actions reuse copy guards and reset date', async () => {
+  let copies = 0;
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => { copies++; } });
+  try {
+    await ui.menu('copy'); assert.equal(copies, 1);
+    const input = ui.input('date-input');
+    input.nativeValue = 'R7.2.29'; input.dispatch('input'); await ui.tick();
+    await ui.menu('copy'); assert.equal(copies, 1);
+    await ui.menu('today');
+    assert.equal(ui.input('date-error').textContent, '');
+    assert.equal(input.value, '2025-12-31');
+    await ui.menu('copy'); assert.equal(copies, 2);
+  } finally { ui.destroy(); }
+});
+
+test('compiled first launch repeats until saved; first save collapses, focuses seal and shows hint', async () => {
+  for (let launch = 0; launch < 2; launch++) {
+    const ui = await mountApp(initialSettings(), { clipboard: async () => {} });
+    try {
+      assert.equal(panelOf(ui).hidden, false);
+      assert.equal(ui.document.activeElement, ui.input('settings-heading'));
+      assert.equal(hintOf(ui), undefined);
+      assert.equal(expandCommands(ui)[0].args.expanded, true);
+      if (launch === 0) {
+        ui.keydown({ key: 'Escape' }); await ui.tick();
+        assert.ok(ui.element(node => node.textContent === '△ 設定が未保存です（Alt+S）'));
+        assert.equal(ui.commands.some(call => call.command === 'save'), false);
+      } else {
+        ui.button('保存').dispatch('click'); await ui.tick();
+        assert.equal(panelOf(ui).hidden, true);
+        assert.equal(ui.document.activeElement, sealOf(ui));
+        assert.equal(hintOf(ui).textContent, '右クリックで設定');
+      }
+    } finally { ui.destroy(); }
+  }
+});
+
+for (const count of [0, 1, 2, 3, 4]) {
+  test(`compiled hint at persisted launch count ${count} has exact lifetime and stays below seal`, async () => {
+    const ui = await mountApp(initialSettings(), { revision: 'saved', hintLaunchCount: count, clipboard: async () => {} });
+    try {
+      assert.equal(panelOf(ui).hidden, true);
+      assert.equal(hintOf(ui)?.textContent, count <= 3 ? '右クリックで設定' : undefined);
+      if (count <= 3) {
+        const main = sealOf(ui).parentNode.parentNode;
+        const siblings = main.parentNode.childNodes;
+        assert.ok(siblings.indexOf(hintOf(ui)) > siblings.indexOf(main));
+      }
+      ui.keydown({ key: 's', altKey: true }); await ui.tick();
+      assert.equal(hintOf(ui)?.textContent, count <= 3 ? '右クリックで設定' : undefined);
+      ui.keydown({ key: 'Escape' }); await ui.tick();
+      assert.equal(hintOf(ui)?.textContent, count <= 3 ? '右クリックで設定' : undefined);
+    } finally { ui.destroy(); }
+  });
+}
+
+test('compiled double-click copies once even if first copy already finished, single/keyboard click remain immediate', async () => {
+  let copies = 0;
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => { copies++; } });
+  try {
+    const seal = sealOf(ui);
+    seal.dispatch('click', { detail: 1, button: 0 }); await ui.tick();
+    assert.equal(copies, 1);
+    assert.equal(panelOf(ui).hidden, true);
+    seal.dispatch('click', { detail: 2, button: 0 });
+    seal.dispatch('dblclick', { detail: 2, button: 0 }); await ui.tick();
+    assert.equal(copies, 1);
+    assert.equal(panelOf(ui).hidden, false);
+    assert.equal(ui.document.activeElement, ui.input('settings-heading'));
+    ui.keydown({ key: 'Escape' }); await ui.tick();
+    seal.dispatch('click', { detail: 0 }); await ui.tick();
+    assert.equal(copies, 2, 'Enter/Space activation has detail 0');
+    seal.dispatch('dblclick', { detail: 2, button: 2 }); await ui.tick();
+    assert.equal(panelOf(ui).hidden, true, 'right double-click does not expand');
+    ui.settings.update(config => ({ ...config, output_size: 0 })); await ui.tick();
+    seal.dispatch('click', { detail: 1, button: 0 });
+    seal.dispatch('click', { detail: 2, button: 0 });
+    seal.dispatch('dblclick', { detail: 2, button: 0 }); await ui.tick();
+    assert.equal(copies, 2);
+    assert.equal(panelOf(ui).hidden, false, 'invalid copy input does not prevent the settings gesture');
+  } finally { ui.destroy(); }
+});
+
+for (const issue of ['pending edit', 'date error', 'font error', 'copy error', 'save error']) {
+  test(`compiled first save never auto-collapses with ${issue}`, async () => {
+    const pending = deferred();
+    const ui = await mountApp(initialSettings(), {
+      clipboard: async () => { if (issue === 'copy error') throw new Error('copy error'); },
+      fontError: issue === 'font error' ? 'font error' : undefined,
+      persist: () => pending.promise,
+    });
+    try {
+      if (issue === 'copy error') { sealOf(ui).dispatch('click', { detail: 1 }); await ui.tick(); }
+      ui.button('保存').dispatch('click'); await ui.tick();
+      if (issue === 'pending edit') ui.settings.update(config => ({ ...config, top_str: '保存中の編集' }));
+      if (issue === 'date error') {
+        const date = ui.input('date-input'); date.nativeValue = 'R7.2.29'; date.dispatch('input');
+      }
+      await ui.tick();
+      if (issue === 'save error') pending.reject(new Error('disk full')); else pending.resolve('saved');
+      await ui.tick();
+      assert.equal(panelOf(ui).hidden, false);
+      assert.equal(expandCommands(ui).some(call => !call.args.expanded), false);
+    } finally { ui.destroy(); }
+  });
+}
+
+test('compiled storage message has one live copy and one aria-hidden visual copy', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {}, persist: async () => { throw new Error('disk full'); } });
+  try {
+    await ui.menu('settings');
+    ui.button('保存').dispatch('click'); await ui.tick();
+    const copies = ui.elements(node => node.nodeName === 'P' && node.textContent.startsWith('× 保存に失敗しました'));
+    assert.equal(copies.length, 2);
+    assert.equal(copies.filter(node => node.getAttribute('aria-hidden') === 'true').length, 1);
+    assert.equal(copies.filter(node => ['status', 'alert'].includes(node.getAttribute('role'))).length, 1);
+    assert.equal(copies.find(node => node.getAttribute('role')).getAttribute('role'), 'alert');
+  } finally { ui.destroy(); }
+});
+
+test('compiled menu failure still prevents WebView defaults and failed expansion preserves current UI', async () => {
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => {}, native: async command => {
+    if (['show_settings_menu', 'set_settings_expanded'].includes(command)) throw new Error('native error');
+  } });
+  try {
+    assert.equal(ui.contextmenu({ button: 2 }).defaultPrevented, true); await ui.tick();
+    assert.ok(ui.element(node => node.textContent === '× 設定エラー'));
+    ui.keydown({ key: 's', altKey: true }); await ui.tick();
+    assert.equal(panelOf(ui).hidden, true);
+  } finally { ui.destroy(); }
+});
+
+
+test('compiled double-click opens during an in-flight copy without starting a second write', async () => {
+  const pending = deferred();
+  let writes = 0;
+  const ui = await mountApp(initialSettings(), { revision: 'saved', clipboard: async () => { writes++; await pending.promise; } });
+  try {
+    const seal = sealOf(ui);
+    seal.dispatch('click', { detail: 1, button: 0 }); await ui.tick();
+    assert.equal(seal.getAttribute('aria-disabled'), 'true');
+    seal.dispatch('click', { detail: 2, button: 0 });
+    seal.dispatch('dblclick', { detail: 2, button: 0 }); await ui.tick();
+    assert.equal(writes, 1);
+    assert.equal(panelOf(ui).hidden, false);
+    assert.equal(ui.document.activeElement, ui.input('settings-heading'));
+    pending.resolve(); await ui.tick();
+    assert.equal(writes, 1);
+  } finally { pending.resolve(); ui.destroy(); }
 });
